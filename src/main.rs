@@ -28,11 +28,28 @@ struct Opt {
     #[clap(short = 'q', long = "quiet", help = "Suppress non-error messages")]
     no_show_progress: bool,
 
+    #[clap(
+        short = 'p',
+        long = "parallelism",
+        help = "Allow up to n sync jobs (default is the number of online processors)",
+        default_value_t = 0
+    )]
+    parallelism: usize,
+
     #[clap(parse(from_os_str))]
     source: PathBuf,
 
     #[clap(parse(from_os_str))]
     destination: PathBuf,
+}
+
+fn get_parallelism(parallelism: usize) -> usize {
+    let available_parallelism = std::thread::available_parallelism().unwrap().get();
+    if parallelism == 0 || parallelism > available_parallelism {
+        available_parallelism
+    } else {
+        parallelism
+    }
 }
 
 fn main() -> Result<(), Error> {
@@ -53,6 +70,7 @@ fn main() -> Result<(), Error> {
     let options = SyncOptions {
         preserve_permissions: !opt.no_preserve_permissions,
         perform_dry_run: opt.perform_trial_run,
+        parallelism: get_parallelism(opt.parallelism),
     };
     let syncer = Syncer::new(source, destination, options, Box::new(console_info));
     let stats = syncer.sync();

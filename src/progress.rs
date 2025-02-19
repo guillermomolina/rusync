@@ -3,7 +3,10 @@ use crate::sync::Stats;
 
 #[doc(hidden)]
 pub enum ProgressMessage {
-    DoneSyncing(SyncOutcome),
+    DoneSyncing {
+        entry: String,
+        outcome: SyncOutcome,
+    },
     StartSync(String),
     Todo {
         num_files: u64,

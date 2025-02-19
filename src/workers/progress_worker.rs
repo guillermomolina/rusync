@@ -37,21 +37,40 @@ impl ProgressWorker {
                     stats.num_files = num_files;
                     stats.total_size = total_size;
                 }
-                ProgressMessage::StartSync(x) => {
-                    self.progress_info.new_file(&x);
-                    current_file = x;
+                ProgressMessage::StartSync(name) => {
+                    self.progress_info.new_file(&name);
+                    if current_file != "" {
+                         eprintln!("Error: file mismatch");
+                    }
+                    current_file = name;
                     index += 1;
                 }
-                ProgressMessage::DoneSyncing(x) => {
+                ProgressMessage::DoneSyncing { entry, outcome } => {
                     self.progress_info.done_syncing();
-                    stats.add_outcome(&x);
-                    file_done = 0;
+                    stats.add_outcome(&outcome);
+                    if current_file == entry {
+                        file_done = 0;
+                        current_file = String::from("");
+                    }
+                    else {
+                        eprintln!("Error: file mismatch");
+                    }
                 }
                 ProgressMessage::SyncError { entry, details } => {
                     self.progress_info.error(&entry, &details);
+                    if current_file == entry {
+                        file_done = 0;
+                        current_file = String::from("");
+                    }
+                    else {
+                        eprintln!("Error: file mismatch");
+                    }
                     stats.add_error();
                 }
-                ProgressMessage::Syncing { done, size, .. } => {
+                ProgressMessage::Syncing { description, done, size, .. } => {
+                    if current_file != description {
+                        eprintln!("Error: file mismatch");
+                    }
                     file_done += done;
                     total_done += done;
                     let elapsed = now.elapsed().as_secs() as usize;

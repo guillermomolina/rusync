@@ -1,17 +1,17 @@
 use std::path::Path;
 use std::path::PathBuf;
 use std::sync::mpsc::channel;
+use std::sync::Arc;
+use std::sync::Mutex;
 use std::thread;
 
-use anyhow::{anyhow, Error};
+use anyhow::{anyhow, Error, Result};
 
 use crate::entry::Entry;
 use crate::fsops;
 use crate::fsops::SyncOutcome::*;
 use crate::progress::{ProgressInfo, ProgressMessage};
-use crate::workers::ProgressWorker;
-use crate::workers::SyncWorker;
-use crate::workers::WalkWorker;
+use crate::workers::{ProgressWorker, SyncWorker, WalkWorker};
 
 #[derive(Debug)]
 pub struct Stats {
@@ -99,14 +99,16 @@ impl Stats {
 pub struct SyncOptions {
     /// Wether to preserve permissions of the source file after the destination is written.
     pub preserve_permissions: bool,
-    pub perform_dry_run: bool
+    pub perform_dry_run: bool,
+    pub parallelism: usize,
 }
 
 impl Default for SyncOptions {
     fn default() -> Self {
         Self {
             preserve_permissions: true,
-            perform_dry_run: false
+            perform_dry_run: false,
+            parallelism: 1,
         }
     }
 }
@@ -135,30 +137,45 @@ impl Syncer {
 
     pub fn sync(self) -> Result<Stats, Error> {
         let (walker_entry_output, syncer_input) = channel::<Entry>();
+        let syncer_input = Arc::new(Mutex::new(syncer_input));
         let (walker_stats_output, progress_input) = channel::<ProgressMessage>();
         let progress_output = walker_stats_output.clone();
 
         let walk_worker = WalkWorker::new(&self.source, walker_entry_output, walker_stats_output);
-        let sync_worker = SyncWorker::new(
-            &self.source,
-            &self.destination,
-            syncer_input,
-            progress_output,
-        );
+        let mut sync_workers = vec![];
+        for _ in 0..self.options.parallelism {
+            let sync_worker = SyncWorker::new(
+                &self.source,
+                &self.destination,
+                Arc::clone(&syncer_input),
+                progress_output.clone(),
+            );
+            sync_workers.push(sync_worker);
+        };
         let progress_worker = ProgressWorker::new(progress_input, self.progress_info);
         let options = self.options;
 
         let walker_thread = thread::spawn(move || walk_worker.start());
-        let syncer_thread = thread::spawn(move || sync_worker.start(&options));
+        let mut syncer_threads = vec![];
+        for sync_worker in sync_workers {
+            let syncer_thread = thread::spawn(move || sync_worker.start(&options));
+            syncer_threads.push(syncer_thread);
+        }
         let progress_thread = thread::spawn(|| progress_worker.start());
 
         walker_thread
             .join()
             .map_err(|e| anyhow!("Could not join walker thread: {:?}", e))?;
 
-        let syncer_result = syncer_thread
-            .join()
-            .map_err(|e| anyhow!("Could not join syncer thread: {:?}", e))?;
+        let mut syncer_result: Result<(), Error> = Ok(());
+        for syncer_thread in syncer_threads {
+            let result = syncer_thread
+                .join()
+                .map_err(|e| anyhow!("Could not join syncer thread: {:?}", e))?;
+            if let Err(e) = result {
+                syncer_result = Err(anyhow!("Syncer thread error: {:?}", e));
+            }
+        }
 
         let progress_result = progress_thread
             .join()

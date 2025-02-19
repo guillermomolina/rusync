@@ -2,6 +2,8 @@ use std::fs;
 use std::path::Path;
 use std::path::PathBuf;
 use std::sync::mpsc::{Receiver, Sender};
+use std::sync::Arc;
+use std::sync::Mutex;
 
 use anyhow::{Context, Error};
 
@@ -12,7 +14,7 @@ use crate::progress::ProgressMessage;
 use crate::sync::SyncOptions;
 
 pub struct SyncWorker {
-    input: Receiver<Entry>,
+    input: Arc<Mutex<Receiver<Entry>>>,
     output: Sender<ProgressMessage>,
     source: PathBuf,
     destination: PathBuf,
@@ -22,7 +24,7 @@ impl SyncWorker {
     pub fn new(
         source: &Path,
         destination: &Path,
-        input: Receiver<Entry>,
+        input: Arc<Mutex<Receiver<Entry>>>,
         output: Sender<ProgressMessage>,
     ) -> SyncWorker {
         SyncWorker {
@@ -34,10 +36,13 @@ impl SyncWorker {
     }
 
     pub fn start(self, opts: &SyncOptions) -> Result<(), Error> {
-        for entry in self.input.iter() {
+        while let Ok(entry) = self.input.lock().unwrap().recv() {
             let sync_outcome = self.sync(&entry, &opts);
             let progress_message = match sync_outcome {
-                Ok(s) => ProgressMessage::DoneSyncing(s),
+                Ok(s) => ProgressMessage::DoneSyncing {
+                    entry: entry.description().to_string(),
+                    outcome: s,
+                },
                 Err(e) => ProgressMessage::SyncError {
                     entry: entry.description().to_string(),
                     details: format!("{:#}", e),

@@ -21,6 +21,7 @@
             },
             "args": [
                 "-n",
+                "--parallelism=1",
                 "/home/guille/Red",
                 "/tmp/data/"
             ],

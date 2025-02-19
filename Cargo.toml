@@ -1,7 +1,10 @@
 [package]
 name = "rusync"
-version = "0.7.3"
-authors = ["Dimitri Merejkowsky <dimitri@dmerej.info>", "Guillermo Adrián Molina <guillermoadrianmolina@hotmail.com>"]
+version = "0.8.0"
+authors = [
+    "Dimitri Merejkowsky <dimitri@dmerej.info>",
+    "Guillermo Adrián Molina <guillermoadrianmolina@hotmail.com>",
+]
 
 readme = "README.md"
 description = "Minimalist rsync clone in Rust"
@@ -16,7 +19,7 @@ edition = "2021"
 
 [dependencies]
 anyhow = "1.0.58"
-clap = {version = "3.2.8", features = ["derive"] }
+clap = { version = "3.2.8", features = ["derive"] }
 colored = "2.0.0"
 filetime = "0.2.17"
 humansize = "1.1.1"
