@@ -1,3 +1,7 @@
+# 0.7.3
+
+* Add a `--dry-run` option to perform a trial run with no changes made
+
 # 0.7.2
 
 * Update dependencies

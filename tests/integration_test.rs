@@ -75,6 +75,7 @@ fn new_test_syncer(src: &Path, dest: &Path) -> rusync::Syncer {
     let dummy_progress_info = DummyProgressInfo {};
     let options = rusync::SyncOptions {
         preserve_permissions: true,
+        perform_dry_run: false,
     };
     rusync::Syncer::new(src, dest, options, Box::new(dummy_progress_info))
 }
@@ -132,6 +133,7 @@ fn do_not_preserve_permissions() -> Result<(), std::io::Error> {
     let (src_path, dest_path) = setup_test(tmp_dir.path());
     let options = rusync::SyncOptions {
         preserve_permissions: false,
+        perform_dry_run: false,
     };
     let syncer = rusync::Syncer::new(
         &src_path,
@@ -203,5 +205,26 @@ fn broken_link_in_src() -> Result<(), std::io::Error> {
     assert!(!dest_broken_link.exists());
     assert_eq!(dest_broken_link.read_link()?.to_string_lossy(), "no-such");
     assert!(result.is_ok());
+    Ok(())
+}
+
+#[test]
+#[cfg(unix)]
+fn dry_run() -> Result<(), std::io::Error> {
+    let tmp_dir = TempDir::new()?;
+    let (src_path, dest_path) = setup_test(tmp_dir.path());
+    let options = rusync::SyncOptions {
+        preserve_permissions: true,
+        perform_dry_run: true,
+    };
+    let syncer = rusync::Syncer::new(
+        &src_path,
+        &dest_path,
+        options,
+        Box::new(DummyProgressInfo {}),
+    );
+    let outcome = syncer.sync();
+    assert!(outcome.is_ok());
+    assert!(!dest_path.exists(), "{:?} does exist", dest_path);
     Ok(())
 }

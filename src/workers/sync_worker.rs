@@ -33,9 +33,9 @@ impl SyncWorker {
         }
     }
 
-    pub fn start(self, opts: SyncOptions) -> Result<(), Error> {
+    pub fn start(self, opts: &SyncOptions) -> Result<(), Error> {
         for entry in self.input.iter() {
-            let sync_outcome = self.sync(&entry, opts);
+            let sync_outcome = self.sync(&entry, &opts);
             let progress_message = match sync_outcome {
                 Ok(s) => ProgressMessage::DoneSyncing(s),
                 Err(e) => ProgressMessage::SyncError {
@@ -48,27 +48,29 @@ impl SyncWorker {
         Ok(())
     }
 
-    fn create_missing_dest_dirs(&self, rel_path: &Path) -> Result<(), Error> {
-        let parent_rel_path = rel_path
-            .parent()
-            .expect("dest directory should have a parent");
-        let to_create = self.destination.join(parent_rel_path);
-        fs::create_dir_all(&to_create)
-            .with_context(|| format!("Could not create '{}'", to_create.display()))?;
+    fn create_missing_dest_dirs(&self, rel_path: &Path, opts: &SyncOptions) -> Result<(), Error> {
+        if !opts.perform_dry_run {
+            let parent_rel_path = rel_path
+                .parent()
+                .expect("dest directory should have a parent");
+            let to_create = self.destination.join(parent_rel_path);
+            fs::create_dir_all(&to_create)
+                .with_context(|| format!("Could not create '{}'", to_create.display()))?;
+        }
         Ok(())
     }
 
-    fn sync(&self, src_entry: &Entry, opts: SyncOptions) -> Result<SyncOutcome, Error> {
+    fn sync(&self, src_entry: &Entry, opts: &SyncOptions) -> Result<SyncOutcome, Error> {
         let rel_path = fsops::get_rel_path(src_entry.path(), &self.source);
-        self.create_missing_dest_dirs(&rel_path)?;
+        self.create_missing_dest_dirs(&rel_path, &opts)?;
         let desc = rel_path.to_string_lossy();
 
         let dest_path = self.destination.join(&rel_path);
         let dest_entry = Entry::new(&desc, &dest_path);
-        let outcome = fsops::sync_entries(&self.output, src_entry, &dest_entry)?;
+        let outcome = fsops::sync_entries(&self.output, src_entry, &dest_entry, &opts)?;
         #[cfg(unix)]
         {
-            if opts.preserve_permissions {
+            if opts.preserve_permissions && !opts.perform_dry_run {
                 fsops::copy_permissions(src_entry, &dest_entry)?;
             }
         }

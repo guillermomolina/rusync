@@ -18,6 +18,13 @@ struct Opt {
     #[clap(long = "err-list", help = "Write errors to the given file")]
     error_list_path: Option<PathBuf>,
 
+    #[clap(
+        short = 'n',
+        long = "dry-run",
+        help = "Perform a trial run with no changes made"
+    )]
+    perform_trial_run: bool,
+
     #[clap(parse(from_os_str))]
     source: PathBuf,
 
@@ -40,6 +47,7 @@ fn main() -> Result<(), Error> {
     };
     let options = SyncOptions {
         preserve_permissions: !opt.no_preserve_permissions,
+        perform_dry_run: opt.perform_trial_run,
     };
     let syncer = Syncer::new(source, destination, options, Box::new(console_info));
     let stats = syncer.sync();

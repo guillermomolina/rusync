@@ -99,12 +99,14 @@ impl Stats {
 pub struct SyncOptions {
     /// Wether to preserve permissions of the source file after the destination is written.
     pub preserve_permissions: bool,
+    pub perform_dry_run: bool
 }
 
 impl Default for SyncOptions {
     fn default() -> Self {
         Self {
             preserve_permissions: true,
+            perform_dry_run: false
         }
     }
 }
@@ -147,7 +149,7 @@ impl Syncer {
         let options = self.options;
 
         let walker_thread = thread::spawn(move || walk_worker.start());
-        let syncer_thread = thread::spawn(move || sync_worker.start(options));
+        let syncer_thread = thread::spawn(move || sync_worker.start(&options));
         let progress_thread = thread::spawn(|| progress_worker.start());
 
         walker_thread
