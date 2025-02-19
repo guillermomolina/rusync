@@ -25,6 +25,9 @@ struct Opt {
     )]
     perform_trial_run: bool,
 
+    #[clap(short = 'q', long = "quiet", help = "Suppress non-error messages")]
+    no_show_progress: bool,
+
     #[clap(parse(from_os_str))]
     source: PathBuf,
 
@@ -42,8 +45,10 @@ fn main() -> Result<(), Error> {
     let destination = &opt.destination;
 
     let console_info = match opt.error_list_path {
-        Some(err_file) => ConsoleProgressInfo::with_error_list_path(&err_file)?,
-        None => ConsoleProgressInfo::new(),
+        Some(err_file) => {
+            ConsoleProgressInfo::with_error_list_path(!opt.no_show_progress, &err_file)?
+        }
+        None => ConsoleProgressInfo::new(!opt.no_show_progress),
     };
     let options = SyncOptions {
         preserve_permissions: !opt.no_preserve_permissions,

@@ -1,6 +1,7 @@
 # 0.7.3
 
 * Add a `--dry-run` option to perform a trial run with no changes made
+* Add a `--quiet` option to suppress non-error messages
 
 # 0.7.2
 

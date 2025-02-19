@@ -16,14 +16,15 @@ use terminal_size::{terminal_size, Width};
 #[derive(Debug)]
 pub struct ConsoleProgressInfo {
     err_file: Option<std::fs::File>,
+    show_progress: bool,
 }
 
 impl ConsoleProgressInfo {
-    pub fn new() -> Self {
-        Self { err_file: None }
+    pub fn new(show_progress: bool) -> Self {
+        Self { err_file: None, show_progress }
     }
 
-    pub fn with_error_list_path(error_list_path: &Path) -> Result<Self, Error> {
+    pub fn with_error_list_path(show_progress: bool, error_list_path: &Path) -> Result<Self, Error> {
         let err_file = OpenOptions::new()
             .create(true)
             .write(true)
@@ -33,6 +34,7 @@ impl ConsoleProgressInfo {
             })?;
         Ok(Self {
             err_file: Some(err_file),
+            show_progress
         })
     }
 }
@@ -54,6 +56,9 @@ impl ProgressInfo for ConsoleProgressInfo {
     fn new_file(&mut self, _name: &str) {}
 
     fn progress(&mut self, progress: &Progress) {
+        if !self.show_progress {
+            return;
+        }
         let eta_str = human_seconds(progress.eta);
         let percent_width = 3;
         let eta_width = eta_str.len();
@@ -117,7 +122,7 @@ impl ProgressInfo for ConsoleProgressInfo {
 
 impl Default for ConsoleProgressInfo {
     fn default() -> Self {
-        Self::new()
+        Self::new(true)
     }
 }
 
