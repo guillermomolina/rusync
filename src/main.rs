@@ -1,8 +1,10 @@
 use anyhow::Error;
 use clap::Parser;
+use log::info;
 use rusync::console_info::ConsoleProgressInfo;
 use rusync::sync::SyncOptions;
 use rusync::Syncer;
+use std::env;
 use std::path::PathBuf;
 use std::process;
 
@@ -36,6 +38,12 @@ struct Opt {
     )]
     parallelism: usize,
 
+    #[clap(
+        long = "log-level", 
+        help = "Set the log level (e.g., info, debug, trace)"
+    )]
+    log_level: Option<String>,
+
     #[clap(parse(from_os_str))]
     source: PathBuf,
 
@@ -54,6 +62,14 @@ fn get_parallelism(parallelism: usize) -> usize {
 
 fn main() -> Result<(), Error> {
     let opt = Opt::parse();
+
+    // Set log level based on command-line argument or environment variable
+    if let Some(log_level) = &opt.log_level {
+        env::set_var("RUST_LOG", log_level);
+    }
+    env_logger::init();
+
+    info!("Starting rusync");
     let source = &opt.source;
     if !source.is_dir() {
         eprintln!("{} is not a directory", source.to_string_lossy());

@@ -21,9 +21,10 @@
             },
             "args": [
                 "-n",
-                "--parallelism=1",
-                "/home/guille/Red",
-                "/tmp/data/"
+                "--parallelism=4",
+                "--log-level=debug",
+                "/home/gmolina/Temporal",
+                "/home/gmolina/Temporal2"
             ],
             "cwd": "${workspaceFolder}"
         },

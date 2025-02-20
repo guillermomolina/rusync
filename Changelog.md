@@ -1,6 +1,7 @@
-# 0.8.0
+# 1.0.0
 
 * Add parallel workers threads
+* Add logger and a `--log-level` option to set the level
 
 # 0.7.3
 

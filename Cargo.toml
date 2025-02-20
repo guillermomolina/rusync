@@ -1,6 +1,6 @@
 [package]
 name = "rusync"
-version = "0.8.0"
+version = "1.0.0"
 authors = [
     "Dimitri Merejkowsky <dimitri@dmerej.info>",
     "Guillermo Adrián Molina <guillermoadrianmolina@hotmail.com>",
@@ -26,6 +26,8 @@ humansize = "1.1.1"
 humantime = "2.1.0"
 pathdiff = "0.2.1"
 terminal_size = "0.2.1"
+log = "0.4"
+env_logger = "0.9"
 
 [dev-dependencies]
 tempfile = "3.3.0"

@@ -6,13 +6,12 @@ use std::io::Write;
 use std::os::unix;
 use std::path::Path;
 use std::path::PathBuf;
-use std::sync::mpsc;
 
 use anyhow::{bail, Context, Error};
 use filetime::FileTime;
+use log::debug;
 
 use crate::entry::Entry;
-use crate::progress::ProgressMessage;
 use crate::sync::SyncOptions;
 
 const BUFFER_SIZE: usize = 100 * 1024;
@@ -74,7 +73,7 @@ pub fn copy_permissions(src: &Entry, dest: &Entry) -> Result<(), Error> {
     Ok(())
 }
 
-fn copy_link(src: &Entry, dest: &Entry, opts: &SyncOptions) -> Result<SyncOutcome, Error> {
+fn copy_link(id: usize, src: &Entry, dest: &Entry, opts: &SyncOptions) -> Result<SyncOutcome, Error> {
     let src_target = std::fs::read_link(src.path())
         .with_context(|| format!("While copying source link '{}'", src.description()))?;
 
@@ -105,6 +104,7 @@ fn copy_link(src: &Entry, dest: &Entry, opts: &SyncOptions) -> Result<SyncOutcom
         }
         None => {
             // OK, dest does not exist
+            debug!("[{}] Creating link from {} to {}", id, dest.description(), src.description());
             outcome = SyncOutcome::SymlinkCreated;
         }
     }
@@ -129,7 +129,7 @@ fn copy_link(src: &Entry, dest: &Entry, opts: &SyncOptions) -> Result<SyncOutcom
 }
 
 pub fn copy_entry(
-    progress_sender: &mpsc::Sender<ProgressMessage>,
+    id: usize,
     src: &Entry,
     dest: &Entry,
     opts: &SyncOptions
@@ -158,12 +158,14 @@ pub fn copy_entry(
             file.write_all(&buffer[0..num_read])
                 .with_context(|| format!("Could not write to '{}'", dest.description()))?;
         }
-        let progress = ProgressMessage::Syncing {
-            description: src.description().clone(),
-            size: src_size as usize,
-            done: num_read,
-        };
-        let _ = progress_sender.send(progress);
+        // let progress = ProgressMessage::Syncing {
+        //     description: src.description().clone(),
+        //     size: src_size as usize,
+        //     done: num_read,
+        // };
+        // let _ = progress_sender.send(progress);
+        debug!("[{}] Progress: {} {} {}", id, src.description(), src_size, num_read);
+
     }
     Ok(SyncOutcome::FileCopied { size: src_size })
 }
@@ -178,21 +180,23 @@ fn has_different_size(src: &Entry, dest: &Entry) -> bool {
 }
 
 pub fn sync_entries(
-    progress_sender: &mpsc::Sender<ProgressMessage>,
+    id: usize,
     src: &Entry,
     dest: &Entry,
     opts: &SyncOptions
 ) -> Result<SyncOutcome, Error> {
-    let _ = progress_sender.send(ProgressMessage::StartSync(src.description().to_string()));
+    // let _ = progress_sender.send(ProgressMessage::StartSync(src.description().to_string()));
+
+    debug!("[{}] Syncing {} to {}", id, src.description(), dest.description());
     let is_link = src.is_link().expect("src.is_link should not be None");
     if is_link {
-        return copy_link(src, dest, &opts);
+        return copy_link(id, src, dest, &opts);
     }
     let different_size = has_different_size(src, dest);
     let more_recent = is_more_recent_than(src, dest);
     // TODO: check if files really are different ?
     if more_recent || different_size {
-        return copy_entry(progress_sender, src, dest, &opts);
+        return copy_entry(id, src, dest, &opts);
     }
     Ok(SyncOutcome::UpToDate)
 }
@@ -200,7 +204,6 @@ pub fn sync_entries(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::mpsc::channel;
     use tempfile::TempDir;
 
     #[test]
@@ -215,10 +218,11 @@ mod tests {
         let dest_entry = Entry::new("dest.txt", dest);
         let options: SyncOptions = Default::default();
 
-        let (progress_output, _) = channel::<ProgressMessage>();
-        sync_entries(&progress_output, &src_entry, &dest_entry, &options).unwrap();
+        // let (progress_output, _) = channel::<ProgressMessage>();
 
-        let actual = std::fs::read_to_string(dest)?;
+        sync_entries(0, &src_entry, &dest_entry, &options).unwrap();
+
+        let actual: String = std::fs::read_to_string(dest)?;
         assert_eq!(actual, contents);
         Ok(())
     }
@@ -237,8 +241,8 @@ mod tests {
         std::fs::write(dest, old_contents)?;
         let options: SyncOptions = Default::default();
 
-        let (progress_output, _) = channel::<ProgressMessage>();
-        sync_entries(&progress_output, &src_entry, &dest_entry, &options).unwrap();
+        // let (progress_output, _) = channel::<ProgressMessage>();
+        sync_entries(0, &src_entry, &dest_entry, &options).unwrap();
 
         let actual = std::fs::read_to_string(dest)?;
         assert_eq!(actual, new_contents);
@@ -282,7 +286,7 @@ mod symlink_tests {
         let src_entry = Entry::new("src", src_link);
         let dest_path = &tmp_path.join(dest);
         let dest_entry = Entry::new(dest, dest_path);
-        copy_link(&src_entry, &dest_entry, &SyncOptions::default())
+        copy_link(0, &src_entry, &dest_entry, &SyncOptions::default())
     }
 
     #[test]

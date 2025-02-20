@@ -142,14 +142,14 @@ fn erase_line() {
     print!("{}\r", String::from_utf8(line).unwrap());
 }
 
-fn human_seconds(s: usize) -> String {
+pub fn human_seconds(s: usize) -> String {
     let hours = s / 3600;
     let minutes = (s / 60) % 60;
     let seconds = s % 60;
     format!("{:02}:{:02}:{:02}", hours, minutes, seconds)
 }
 
-fn truncate_lossy(text: &str, maxsize: usize) -> String {
+pub fn truncate_lossy(text: &str, maxsize: usize) -> String {
     // Our goal here is to make sure the text can be written
     // in the terminal without going over the `maxsize` length
     // Our approach is to first convert to bytes, then truncate

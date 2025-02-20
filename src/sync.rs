@@ -10,6 +10,7 @@ use anyhow::{anyhow, Error, Result};
 use crate::entry::Entry;
 use crate::fsops;
 use crate::fsops::SyncOutcome::*;
+use crate::progress::Progress;
 use crate::progress::{ProgressInfo, ProgressMessage};
 use crate::workers::{ProgressWorker, SyncWorker, WalkWorker};
 
@@ -139,16 +140,17 @@ impl Syncer {
         let (walker_entry_output, syncer_input) = channel::<Entry>();
         let syncer_input = Arc::new(Mutex::new(syncer_input));
         let (walker_stats_output, progress_input) = channel::<ProgressMessage>();
-        let progress_output = walker_stats_output.clone();
 
         let walk_worker = WalkWorker::new(&self.source, walker_entry_output, walker_stats_output);
         let mut sync_workers = vec![];
-        for _ in 0..self.options.parallelism {
+        for id in 0..self.options.parallelism {
+            let progress_info = Progress::new();
             let sync_worker = SyncWorker::new(
+                id,
                 &self.source,
                 &self.destination,
                 Arc::clone(&syncer_input),
-                progress_output.clone(),
+                Box::new(progress_info),
             );
             sync_workers.push(sync_worker);
         };
@@ -157,7 +159,7 @@ impl Syncer {
 
         let walker_thread = thread::spawn(move || walk_worker.start());
         let mut syncer_threads = vec![];
-        for sync_worker in sync_workers {
+        for mut sync_worker in sync_workers {
             let syncer_thread = thread::spawn(move || sync_worker.start(&options));
             syncer_threads.push(syncer_thread);
         }
