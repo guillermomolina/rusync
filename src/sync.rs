@@ -88,6 +88,12 @@ impl Stats {
                 self.copied += 1;
                 self.total_transfered += size;
             }
+            FileChunkCopied { id, size } => {
+                if *id == 0 {
+                    self.copied += 1;
+                }
+                self.total_transfered += size;
+            }
             UpToDate => self.up_to_date += 1,
             SymlinkUpdated => self.symlink_updated += 1,
             SymlinkCreated => self.symlink_created += 1,

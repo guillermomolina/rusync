@@ -1,5 +1,8 @@
 use std::fs;
 use std::fs::File;
+use std::fs::OpenOptions;
+use std::io::Read;
+use std::io::Seek;
 #[cfg(unix)]
 use std::os::unix;
 use std::path::Path;
@@ -12,10 +15,13 @@ use log::debug;
 use crate::entry::Entry;
 use crate::sync::SyncOptions;
 
+pub(crate) const CHUNK_SIZE: usize = 32 * 1024 * 1024;
+
 #[derive(PartialEq, Eq, Debug)]
 pub enum SyncOutcome {
     UpToDate,
     FileCopied { size: u64 },
+    FileChunkCopied { id: usize, size: u64 },
     SymlinkUpdated,
     SymlinkCreated,
 }
@@ -134,15 +140,11 @@ fn copy_link(
     }
 }
 
-pub fn copy_entry(
-    src: &Entry,
-    dest: &Entry,
-    opts: &SyncOptions,
-) -> Result<SyncOutcome, Error> {
-    let src_path = src.path();
-    let dest_path = dest.path();
+pub fn copy_entry(src: &Entry, dest: &Entry, opts: &SyncOptions) -> Result<SyncOutcome, Error> {
     if !opts.perform_dry_run {
-        let mut src_file = File::open(src_path)
+        let src_path = src.path();
+        let dest_path = dest.path();
+            let mut src_file = File::open(src_path)
             .with_context(|| format!("Could not open '{}' for reading", src.description()))?;
         let mut dest_file = File::create(dest_path)
             .with_context(|| format!("Could not open '{}' for writing", dest.description()))?;
@@ -159,6 +161,61 @@ pub fn copy_entry(
     Ok(SyncOutcome::FileCopied { size: src_size })
 }
 
+pub fn copy_entry_chunk(
+    src: &Entry,
+    dest: &Entry,
+    opts: &SyncOptions,
+    chunk_id: usize,
+) -> Result<SyncOutcome, Error> {
+    let src_meta = src.metadata().expect("src_meta should not be None");
+    let src_size = src_meta.len();
+    if !opts.perform_dry_run {
+        let src_path = src.path();
+        let local_src_metadata = fs::metadata(src_path).with_context(|| format!("Could not read metadata from '{}'", src.description()))?;
+        let local_src_size = local_src_metadata.len();
+        if local_src_size != src_size {
+            bail!("{} has changed size since we started copying", src.description());
+        }
+        let src_file = File::open(src_path)
+            .with_context(|| format!("Could not open '{}' for reading", src.description()))?;
+        let dest_path = dest.path();
+        
+        if has_different_size(src, dest) {
+            if chunk_id == 0 {
+                create_empty_file(dest_path, src_size)?;
+            } else {    
+                let mut timeout = 0;
+                while has_different_size(src, dest) {
+                    debug!("Waiting for file creation to finish");
+                    std::thread::sleep(std::time::Duration::from_millis(10));
+                    if timeout > 1000 {
+                        bail!("Timeout waiting for file creation to finish");
+                    }
+                    timeout += 1;
+                }
+            }
+        }
+
+
+        let dest_file = OpenOptions::new().write(true).truncate(false).open(dest_path)
+            .with_context(|| format!("Could not open '{}' for writing", dest.description()))?;
+
+        let offset = (chunk_id * CHUNK_SIZE) as u64;
+        let mut src_file = src_file.take(CHUNK_SIZE as u64);
+        let mut dest_file = dest_file;
+        dest_file.seek(std::io::SeekFrom::Start(offset))?;
+        std::io::copy(&mut src_file, &mut dest_file).with_context(|| {
+            format!(
+            "Could not copy chunk from '{}' to '{}'",
+            src.description(),
+            dest.description()
+            )
+        })?;
+    }
+    Ok(SyncOutcome::FileChunkCopied { id: chunk_id, size: src_size })
+}
+
+
 fn has_different_size(src: &Entry, dest: &Entry) -> bool {
     let src_meta = src.metadata().expect("src_meta should not be None");
     let dest_meta = dest.metadata();
@@ -166,6 +223,12 @@ fn has_different_size(src: &Entry, dest: &Entry) -> bool {
         None => true,
         Some(dest_meta) => dest_meta.len() != src_meta.len(),
     }
+}
+
+fn create_empty_file(path: &Path, size: u64) -> Result<(), Error> {
+    let file = File::create(path).with_context(|| format!("Could not create file '{}'", path.display()))?;
+    file.set_len(size).with_context(|| format!("Could not set length for file '{}'", path.display()))?;
+    Ok(())
 }
 
 pub fn sync_entries(
@@ -190,7 +253,12 @@ pub fn sync_entries(
     let more_recent = is_more_recent_than(src, dest);
     // TODO: check if files really are different ?
     if more_recent || different_size {
-        return copy_entry(src, dest, &opts);
+        let chunk_id = src.get_chunk_id();
+        if chunk_id.is_some() {
+            return copy_entry_chunk(src, dest, &opts, chunk_id.unwrap());
+        } else {
+            return copy_entry(src, dest, &opts);
+        }
     }
     Ok(SyncOutcome::UpToDate)
 }
@@ -211,11 +279,7 @@ mod tests {
         let dest = &tmp_path.join("dest.txt");
         let dest_entry = Entry::new("dest.txt", dest);
         let options: SyncOptions = Default::default();
-
-        // let (progress_output, _) = channel::<ProgressMessage>();
-
         sync_entries(0, &src_entry, &dest_entry, &options).unwrap();
-
         let actual: String = std::fs::read_to_string(dest)?;
         assert_eq!(actual, contents);
         Ok(())

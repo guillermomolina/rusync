@@ -11,7 +11,6 @@ use anyhow::{Context, Error};
 use crate::entry::Entry;
 use crate::fsops;
 
-
 pub struct WalkProgress {
      /// Number of files discovered
     pub num_files: usize,
@@ -86,9 +85,19 @@ impl WalkWorker {
         let metadata = src_entry
             .metadata()
             .with_context(|| format!("Could not read metadata from {:?}", entry.path()))?;
-        self.entry_output
+        if metadata.is_file() && metadata.len() > fsops::CHUNK_SIZE as u64 {
+            let chunks: u64 = metadata.len() / fsops::CHUNK_SIZE as u64;
+            for chunk_id in 0..chunks {
+                let chunked_entry = src_entry.to_chunked_witd_id(chunk_id as usize);
+                self.entry_output
+                    .send(chunked_entry.clone())
+                    .with_context(|| "When walking source dir: could not send entry to progress worker")?;
+            }
+        } else {
+            self.entry_output
             .send(src_entry.clone())
             .with_context(|| "When walking source dir: could not send entry to progress worker")?;
+        }
         Ok(metadata.clone())
     }
 

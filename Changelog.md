@@ -1,3 +1,8 @@
+# 1.1.0
+
+* Split large files in chunks
+* Add copy by chunks
+
 # 1.0.0
 
 * Add parallel workers threads

@@ -10,6 +10,7 @@ pub struct Entry {
     metadata: Option<fs::Metadata>,
     exists: bool,
     is_link: Option<bool>,
+    chunk_id: Option<usize>,
 }
 
 impl Entry {
@@ -30,7 +31,14 @@ impl Entry {
             path: entry_path.to_path_buf(),
             exists: entry_path.exists(),
             is_link,
+            chunk_id: None,
         }
+    }
+
+    pub fn to_chunked_witd_id(&self, chunk_id: usize) -> Entry {
+        let mut entry = self.clone();
+        entry.chunk_id = Some(chunk_id);
+        entry
     }
 
     pub fn description(&self) -> &String {
@@ -49,6 +57,10 @@ impl Entry {
 
     pub fn is_link(&self) -> Option<bool> {
         self.is_link
+    }
+
+    pub fn get_chunk_id(&self) -> Option<usize> {
+        self.chunk_id
     }
 }
 
