@@ -1,7 +1,6 @@
 use anyhow::Error;
 use clap::Parser;
 use log::info;
-use rusync::console_info::ConsoleProgressInfo;
 use rusync::sync::SyncOptions;
 use rusync::Syncer;
 use std::env;
@@ -77,18 +76,12 @@ fn main() -> Result<(), Error> {
     }
     let destination = &opt.destination;
 
-    let console_info = match opt.error_list_path {
-        Some(err_file) => {
-            ConsoleProgressInfo::with_error_list_path(!opt.no_show_progress, &err_file)?
-        }
-        None => ConsoleProgressInfo::new(!opt.no_show_progress),
-    };
     let options = SyncOptions {
         preserve_permissions: !opt.no_preserve_permissions,
         perform_dry_run: opt.perform_trial_run,
         parallelism: get_parallelism(opt.parallelism),
     };
-    let syncer = Syncer::new(source, destination, options, Box::new(console_info));
+    let syncer = Syncer::new(source, destination, options);
     let stats = syncer.sync();
     match stats {
         Err(err) => {

@@ -1,96 +1,40 @@
-use std::sync::mpsc::Receiver;
-use std::time::Instant;
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
+use std::thread;
+use std::time::Duration;
 
-use crate::progress::{Progress, ProgressInfo, ProgressMessage};
 use crate::sync::Stats;
 
+use super::SyncProgress;
+
 pub struct ProgressWorker {
-    input: Receiver<ProgressMessage>,
-    progress_info: Box<dyn ProgressInfo + Send>,
+    progress_info: HashMap<usize, Arc<Mutex<SyncProgress>>>
 }
 
 impl ProgressWorker {
     pub fn new(
-        input: Receiver<ProgressMessage>,
-        progress_info: Box<dyn ProgressInfo + Send>,
+        progress_info: HashMap<usize, Arc<Mutex<SyncProgress>>>
     ) -> ProgressWorker {
         ProgressWorker {
-            input,
             progress_info,
         }
     }
 
-    pub fn start(mut self) -> Stats {
+    pub fn start(self) -> Stats {
         let mut stats = Stats::new();
-        let mut file_done = 0;
-        let mut current_file = String::from("");
         let mut index = 0;
-        let mut total_done = 0;
-        let now = Instant::now();
         stats.start();
-        for progress in self.input.iter() {
-            match progress {
-                ProgressMessage::Todo {
-                    num_files,
-                    total_size,
-                } => {
-                    stats.num_files = num_files;
-                    stats.total_size = total_size;
-                }
-                ProgressMessage::StartSync(name) => {
-                    self.progress_info.new_file(&name);
-                    if current_file != "" {
-                         eprintln!("Error: file mismatch");
-                    }
-                    current_file = name;
-                    index += 1;
-                }
-                ProgressMessage::DoneSyncing { entry, outcome } => {
-                    self.progress_info.done_syncing();
-                    stats.add_outcome(&outcome);
-                    if current_file == entry {
-                        file_done = 0;
-                        current_file = String::from("");
-                    }
-                    else {
-                        eprintln!("Error: file mismatch");
-                    }
-                }
-                ProgressMessage::SyncError { entry, details } => {
-                    self.progress_info.error(&entry, &details);
-                    if current_file == entry {
-                        file_done = 0;
-                        current_file = String::from("");
-                    }
-                    else {
-                        eprintln!("Error: file mismatch");
-                    }
-                    stats.add_error();
-                }
-                ProgressMessage::Syncing { description, done, size, .. } => {
-                    if current_file != description {
-                        eprintln!("Error: file mismatch");
-                    }
-                    file_done += done;
-                    total_done += done;
-                    let elapsed = now.elapsed().as_secs() as usize;
-                    let eta = ((elapsed * stats.total_size) / total_done) - elapsed;
-                    let detailed_progress = Progress {
-                        file_done,
-                        file_size: size,
-                        total_done,
-                        total_size: stats.total_size,
-                        index,
-                        num_files: stats.num_files as usize,
-                        current_file: current_file.clone(),
-                        eta,
-                    };
-                    self.progress_info.progress(&detailed_progress);
-                }
+        loop {
+             for (id, sync_progress) in self.progress_info.iter() {
+                println!("[{}], file: {}", id, sync_progress.lock().unwrap().current_file);
             }
+            index += 1;          
+            if index == 100 {
+                break;
+            }
+            thread::sleep(Duration::from_secs(1));
         }
         stats.stop();
-        self.progress_info.end(&stats);
         stats
     }
 }

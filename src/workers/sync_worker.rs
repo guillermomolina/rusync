@@ -12,16 +12,49 @@ use anyhow::{Context, Error};
 use crate::entry::Entry;
 use crate::fsops;
 use crate::fsops::SyncOutcome;
-use crate::progress::ProgressInfo;
 use crate::sync::SyncOptions;
 use crate::sync::Stats;
+
+pub struct SyncProgress {
+    /// Name of the file being transferred
+    pub current_file: String,
+    /// Size of the current file (in bytes)
+    pub file_size: usize,
+    /// Number of bytes transfered for the current file
+    pub file_transfered_size: usize,
+    /// Number of bytes transfered since the start
+    pub total_transfered_size: usize,
+    /// Estimated total size of the transfer (this may change during transfer)
+    pub total_size: usize,
+    /// Total number of transfered files
+    pub num_transfered_files: usize,
+}
+
+impl SyncProgress {
+    pub fn new() -> SyncProgress {
+        SyncProgress {
+            current_file: String::new(),
+            file_size: 0,
+            file_transfered_size: 0,
+            total_transfered_size: 0,
+            total_size: 0,
+            num_transfered_files: 0,
+        }
+    }
+
+    pub fn new_file(&mut self, name: &str) {
+        self.current_file = name.to_string();
+        self.file_size = 0;
+        self.file_transfered_size = 0;
+    }
+}
 
 pub struct SyncWorker {
     id: usize,
     input: Arc<Mutex<Receiver<Entry>>>,
     source: PathBuf,
     destination: PathBuf,
-    progress_info: Box<dyn ProgressInfo + Send>,
+    sync_progress: Arc<Mutex<SyncProgress>>,
 }
 
 impl SyncWorker {
@@ -30,14 +63,14 @@ impl SyncWorker {
         source: &Path,
         destination: &Path,
         input: Arc<Mutex<Receiver<Entry>>>,
-        progress_info: Box<dyn ProgressInfo + Send>,
+        sync_progress: Arc<Mutex<SyncProgress>>,
     ) -> SyncWorker {
         SyncWorker {
             id,
             source: source.to_path_buf(),
             destination: destination.to_path_buf(),
             input,
-            progress_info,
+            sync_progress,
         }
     }
 
@@ -82,7 +115,7 @@ impl SyncWorker {
 
         let dest_path = self.destination.join(&rel_path);
         let dest_entry = Entry::new(&desc, &dest_path);
-        self.progress_info.new_file(src_entry.description());
+        self.sync_progress.lock().unwrap().new_file(src_entry.description());
         let outcome = fsops::sync_entries(self.id, src_entry, &dest_entry, &opts)?;
         #[cfg(unix)]
         {

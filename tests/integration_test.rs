@@ -11,8 +11,6 @@ use std::process::Command;
 use filetime::FileTime;
 use tempfile::TempDir;
 
-use rusync::progress::ProgressInfo;
-
 fn assert_same_contents(a: &Path, b: &Path) {
     assert!(a.exists(), "{:?} does not exist", a);
     assert!(b.exists(), "{:?} does not exist", b);
@@ -68,17 +66,13 @@ fn make_recent(path: &Path) -> io::Result<()> {
     Ok(())
 }
 
-struct DummyProgressInfo {}
-impl ProgressInfo for DummyProgressInfo {}
-
 fn new_test_syncer(src: &Path, dest: &Path) -> rusync::Syncer {
-    let dummy_progress_info = DummyProgressInfo {};
     let options = rusync::SyncOptions {
         preserve_permissions: true,
         perform_dry_run: false,
         parallelism: 1,
     };
-    rusync::Syncer::new(src, dest, options, Box::new(dummy_progress_info))
+    rusync::Syncer::new(src, dest, options)
 }
 
 #[test]
@@ -141,7 +135,6 @@ fn do_not_preserve_permissions() -> Result<(), std::io::Error> {
         &src_path,
         &dest_path,
         options,
-        Box::new(DummyProgressInfo {}),
     );
     syncer.sync().unwrap();
 
@@ -223,8 +216,7 @@ fn dry_run() -> Result<(), std::io::Error> {
     let syncer = rusync::Syncer::new(
         &src_path,
         &dest_path,
-        options,
-        Box::new(DummyProgressInfo {}),
+        options
     );
     let outcome = syncer.sync();
     assert!(outcome.is_ok());

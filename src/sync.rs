@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::path::Path;
 use std::path::PathBuf;
 use std::sync::mpsc::channel;
@@ -10,9 +11,7 @@ use anyhow::{anyhow, Error, Result};
 use crate::entry::Entry;
 use crate::fsops;
 use crate::fsops::SyncOutcome::*;
-use crate::progress::Progress;
-use crate::progress::{ProgressInfo, ProgressMessage};
-use crate::workers::{ProgressWorker, SyncWorker, WalkWorker};
+use crate::workers::{ProgressWorker, SyncWorker, WalkWorker, SyncProgress};
 
 #[derive(Debug)]
 pub struct Stats {
@@ -118,7 +117,6 @@ pub struct Syncer {
     source: PathBuf,
     destination: PathBuf,
     options: SyncOptions,
-    progress_info: Box<dyn ProgressInfo + Send>,
 }
 
 impl Syncer {
@@ -126,12 +124,10 @@ impl Syncer {
         source: &Path,
         destination: &Path,
         options: SyncOptions,
-        progress_info: Box<dyn ProgressInfo + Send>,
     ) -> Syncer {
         Syncer {
             source: source.to_path_buf(),
             destination: destination.to_path_buf(),
-            progress_info,
             options,
         }
     }
@@ -139,22 +135,23 @@ impl Syncer {
     pub fn sync(self) -> Result<Stats, Error> {
         let (walker_entry_output, syncer_input) = channel::<Entry>();
         let syncer_input = Arc::new(Mutex::new(syncer_input));
-        let (walker_stats_output, progress_input) = channel::<ProgressMessage>();
 
-        let walk_worker = WalkWorker::new(&self.source, walker_entry_output, walker_stats_output);
+        let walk_worker = WalkWorker::new(&self.source, walker_entry_output);
         let mut sync_workers = vec![];
+        let mut sync_progresses = HashMap::new();
         for id in 0..self.options.parallelism {
-            let progress_info = Progress::new();
+            let sync_progress = Arc::new(Mutex::new(SyncProgress::new()));
             let sync_worker = SyncWorker::new(
                 id,
                 &self.source,
                 &self.destination,
                 Arc::clone(&syncer_input),
-                Box::new(progress_info),
+                Arc::clone(&sync_progress),
             );
+            sync_progresses.insert(id, sync_progress);
             sync_workers.push(sync_worker);
         };
-        let progress_worker = ProgressWorker::new(progress_input, self.progress_info);
+        let progress_worker = ProgressWorker::new(sync_progresses);
         let options = self.options;
 
         let walker_thread = thread::spawn(move || walk_worker.start());

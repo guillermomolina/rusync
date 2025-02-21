@@ -12,7 +12,6 @@ use crate::progress::ProgressMessage;
 
 pub struct WalkWorker {
     entry_output: Sender<Entry>,
-    progress_output: Sender<ProgressMessage>,
     source: PathBuf,
 }
 
@@ -20,11 +19,9 @@ impl WalkWorker {
     pub fn new(
         source: &Path,
         entry_output: Sender<Entry>,
-        progress_output: Sender<ProgressMessage>,
     ) -> WalkWorker {
         WalkWorker {
             entry_output,
-            progress_output,
             source: source.to_path_buf(),
         }
     }
@@ -56,13 +53,6 @@ impl WalkWorker {
                     let meta = self.process_file(&entry)?;
                     num_files += 1;
                     total_size += meta.len();
-                    let sent = self.progress_output.send(ProgressMessage::Todo {
-                        num_files,
-                        total_size: total_size as usize,
-                    });
-                    if sent.is_err() {
-                        bail!("stats output chan is closed");
-                    }
                 }
             }
         }
