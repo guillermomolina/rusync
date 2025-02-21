@@ -86,9 +86,9 @@ impl WalkWorker {
             .metadata()
             .with_context(|| format!("Could not read metadata from {:?}", entry.path()))?;
         if metadata.is_file() && metadata.len() > fsops::CHUNK_SIZE as u64 {
-            let chunks: u64 = metadata.len() / fsops::CHUNK_SIZE as u64;
-            for chunk_id in 0..chunks {
-                let chunked_entry = src_entry.to_chunked_witd_id(chunk_id as usize);
+            let num_chunks = (metadata.len() as usize + fsops::CHUNK_SIZE - 1) / fsops::CHUNK_SIZE;
+            for chunk_id in 0..num_chunks {
+                let chunked_entry = src_entry.to_chunked_witd_id(chunk_id);
                 self.entry_output
                     .send(chunked_entry.clone())
                     .with_context(|| "When walking source dir: could not send entry to progress worker")?;

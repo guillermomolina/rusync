@@ -3,6 +3,8 @@ use std::fs::File;
 use std::fs::OpenOptions;
 use std::io::Read;
 use std::io::Seek;
+use std::io::SeekFrom;
+use std::io::Write;
 #[cfg(unix)]
 use std::os::unix;
 use std::path::Path;
@@ -15,7 +17,8 @@ use log::debug;
 use crate::entry::Entry;
 use crate::sync::SyncOptions;
 
-pub(crate) const CHUNK_SIZE: usize = 32 * 1024 * 1024;
+const BUFFER_SIZE: usize = 32 * 1024;
+pub(crate) const CHUNK_SIZE: usize = BUFFER_SIZE * 1024;
 
 #[derive(PartialEq, Eq, Debug)]
 pub enum SyncOutcome {
@@ -144,7 +147,7 @@ pub fn copy_entry(src: &Entry, dest: &Entry, opts: &SyncOptions) -> Result<SyncO
     if !opts.perform_dry_run {
         let src_path = src.path();
         let dest_path = dest.path();
-            let mut src_file = File::open(src_path)
+        let mut src_file = File::open(src_path)
             .with_context(|| format!("Could not open '{}' for reading", src.description()))?;
         let mut dest_file = File::create(dest_path)
             .with_context(|| format!("Could not open '{}' for writing", dest.description()))?;
@@ -169,21 +172,85 @@ pub fn copy_entry_chunk(
 ) -> Result<SyncOutcome, Error> {
     let src_meta = src.metadata().expect("src_meta should not be None");
     let src_size = src_meta.len();
+    let num_chunks = (src_size as usize + CHUNK_SIZE - 1) / CHUNK_SIZE;
+    let transfered_size = if chunk_id < num_chunks {
+        CHUNK_SIZE
+    } else {
+        src_size as usize % CHUNK_SIZE
+    };
     if !opts.perform_dry_run {
         let src_path = src.path();
-        let local_src_metadata = fs::metadata(src_path).with_context(|| format!("Could not read metadata from '{}'", src.description()))?;
+        let mut src_file = File::open(src_path)
+            .with_context(|| format!("Could not open '{}' for reading", src.description()))?;
+        let dest_path = dest.path();
+        let mut dest_file = OpenOptions::new()
+            .write(true)
+            .truncate(false)
+            .open(dest_path)
+            .with_context(|| format!("Could not open '{}' for writing", dest.description()))?;
+        dest_file
+            .set_len(src_size)
+            .with_context(|| format!("Could not set length for file '{}'", dest.description()))?;
+        let mut buffer = vec![0; BUFFER_SIZE];
+        let offset = (chunk_id * CHUNK_SIZE) as u64;
+        src_file
+            .seek(SeekFrom::Start(offset))
+            .with_context(|| format!("Could not position in '{}'", src.description()))?;
+        dest_file
+            .seek(SeekFrom::Start(offset))
+            .with_context(|| format!("Could not position in '{}'", dest.description()))?;
+        let mut local_transfered_size = 0;
+        loop {
+            let num_read = src_file
+                .read(&mut buffer)
+                .with_context(|| format!("Could not read from '{}'", src.description()))?;
+            if num_read == 0 {
+                break;
+            }
+            dest_file
+                .write_all(&buffer[0..num_read])
+                .with_context(|| format!("Could not write to '{}'", dest.description()))?;
+            local_transfered_size += num_read;
+            if local_transfered_size == transfered_size {
+                break;
+            } else if local_transfered_size > transfered_size {
+                bail!("Too much data read");
+            }
+        }
+    }
+    Ok(SyncOutcome::FileChunkCopied {
+        id: chunk_id,
+        size: transfered_size as u64,
+    })
+}
+
+pub fn copy_entry_chunk2(
+    src: &Entry,
+    dest: &Entry,
+    opts: &SyncOptions,
+    chunk_id: usize,
+) -> Result<SyncOutcome, Error> {
+    let src_meta = src.metadata().expect("src_meta should not be None");
+    let src_size = src_meta.len();
+    if !opts.perform_dry_run {
+        let src_path = src.path();
+        let local_src_metadata = fs::metadata(src_path)
+            .with_context(|| format!("Could not read metadata from '{}'", src.description()))?;
         let local_src_size = local_src_metadata.len();
         if local_src_size != src_size {
-            bail!("{} has changed size since we started copying", src.description());
+            bail!(
+                "{} has changed size since we started copying",
+                src.description()
+            );
         }
         let src_file = File::open(src_path)
             .with_context(|| format!("Could not open '{}' for reading", src.description()))?;
         let dest_path = dest.path();
-        
+
         if has_different_size(src, dest) {
             if chunk_id == 0 {
                 create_empty_file(dest_path, src_size)?;
-            } else {    
+            } else {
                 let mut timeout = 0;
                 while has_different_size(src, dest) {
                     debug!("Waiting for file creation to finish");
@@ -196,8 +263,10 @@ pub fn copy_entry_chunk(
             }
         }
 
-
-        let dest_file = OpenOptions::new().write(true).truncate(false).open(dest_path)
+        let dest_file = OpenOptions::new()
+            .write(true)
+            .truncate(false)
+            .open(dest_path)
             .with_context(|| format!("Could not open '{}' for writing", dest.description()))?;
 
         let offset = (chunk_id * CHUNK_SIZE) as u64;
@@ -206,15 +275,17 @@ pub fn copy_entry_chunk(
         dest_file.seek(std::io::SeekFrom::Start(offset))?;
         std::io::copy(&mut src_file, &mut dest_file).with_context(|| {
             format!(
-            "Could not copy chunk from '{}' to '{}'",
-            src.description(),
-            dest.description()
+                "Could not copy chunk from '{}' to '{}'",
+                src.description(),
+                dest.description()
             )
         })?;
     }
-    Ok(SyncOutcome::FileChunkCopied { id: chunk_id, size: src_size })
+    Ok(SyncOutcome::FileChunkCopied {
+        id: chunk_id,
+        size: src_size,
+    })
 }
-
 
 fn has_different_size(src: &Entry, dest: &Entry) -> bool {
     let src_meta = src.metadata().expect("src_meta should not be None");
@@ -226,8 +297,10 @@ fn has_different_size(src: &Entry, dest: &Entry) -> bool {
 }
 
 fn create_empty_file(path: &Path, size: u64) -> Result<(), Error> {
-    let file = File::create(path).with_context(|| format!("Could not create file '{}'", path.display()))?;
-    file.set_len(size).with_context(|| format!("Could not set length for file '{}'", path.display()))?;
+    let file = File::create(path)
+        .with_context(|| format!("Could not create file '{}'", path.display()))?;
+    file.set_len(size)
+        .with_context(|| format!("Could not set length for file '{}'", path.display()))?;
     Ok(())
 }
 
