@@ -28,6 +28,8 @@ pub struct SyncProgress {
     pub total_size: usize,
     /// Total number of transfered files
     pub num_transfered_files: usize,
+    /// Done syncing process
+    pub sync_done: bool,
 }
 
 impl SyncProgress {
@@ -39,6 +41,7 @@ impl SyncProgress {
             total_transfered_size: 0,
             total_size: 0,
             num_transfered_files: 0,
+            sync_done: false,
         }
     }
 
@@ -46,6 +49,11 @@ impl SyncProgress {
         self.current_file = name.to_string();
         self.file_size = 0;
         self.file_transfered_size = 0;
+    }
+
+    pub fn done_syncing(&mut self) {
+        self.new_file("");
+        self.sync_done = true;
     }
 }
 
@@ -92,6 +100,7 @@ impl SyncWorker {
                 },
             };
         }
+        self.sync_progress.lock().unwrap().done_syncing();
         stats.stop();
         Ok(stats)
     }

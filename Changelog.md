@@ -2,6 +2,7 @@
 
 * Add parallel workers threads
 * Add logger and a `--log-level` option to set the level
+* Reimplement progress worker
 
 # 0.7.3
 

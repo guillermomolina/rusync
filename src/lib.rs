@@ -29,13 +29,10 @@
 //! }
 //! ```
 //!
-pub mod console_info;
 mod entry;
 mod fsops;
-pub mod progress;
 pub mod sync;
 mod workers;
-pub use crate::console_info::ConsoleProgressInfo;
 pub use crate::sync::Stats;
 pub use crate::sync::SyncOptions;
 pub use crate::sync::Syncer;

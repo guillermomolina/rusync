@@ -4,11 +4,10 @@ use std::path::Path;
 use std::path::PathBuf;
 use std::sync::mpsc::Sender;
 
-use anyhow::{bail, Context, Error};
+use anyhow::{Context, Error};
 
 use crate::entry::Entry;
 use crate::fsops;
-use crate::progress::ProgressMessage;
 
 pub struct WalkWorker {
     entry_output: Sender<Entry>,
