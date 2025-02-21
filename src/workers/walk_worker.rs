@@ -3,31 +3,51 @@ use std::fs::DirEntry;
 use std::path::Path;
 use std::path::PathBuf;
 use std::sync::mpsc::Sender;
+use std::sync::Arc;
+use std::sync::Mutex;
 
 use anyhow::{Context, Error};
 
 use crate::entry::Entry;
 use crate::fsops;
 
+
+pub struct WalkProgress {
+     /// Number of files discovered
+    pub num_files: usize,
+    /// Estimated total size of the transfer (this may change during transfer)
+    pub total_size: usize,
+}
+
+impl WalkProgress {
+    pub fn new() -> WalkProgress {
+        WalkProgress {
+            num_files: 0,
+            total_size: 0,
+        }
+    }
+}
+
 pub struct WalkWorker {
     entry_output: Sender<Entry>,
     source: PathBuf,
+    progress: Arc<Mutex<WalkProgress>>,
 }
 
 impl WalkWorker {
     pub fn new(
         source: &Path,
         entry_output: Sender<Entry>,
+        progress: Arc<Mutex<WalkProgress>>,
     ) -> WalkWorker {
         WalkWorker {
             entry_output,
             source: source.to_path_buf(),
+            progress,
         }
     }
 
     fn walk(&self) -> Result<(), Error> {
-        let mut num_files = 0;
-        let mut total_size = 0;
         let mut subdirs: Vec<PathBuf> = vec![self.source.to_path_buf()];
         while let Some(subdir) = subdirs.pop() {
             // We just checked that subdirs is *not* empty, so calling pop() is safe
@@ -50,8 +70,9 @@ impl WalkWorker {
                     subdirs.push(path);
                 } else {
                     let meta = self.process_file(&entry)?;
-                    num_files += 1;
-                    total_size += meta.len();
+                    let mut progress = self.progress.lock().unwrap();
+                    progress.num_files += 1;
+                    progress.total_size += meta.len() as usize;
                 }
             }
         }

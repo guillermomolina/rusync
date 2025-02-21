@@ -7,47 +7,77 @@ use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 
 use crate::sync::Stats;
 
-use super::SyncProgress;
+use super::{SyncProgress, WalkProgress};
 
 pub struct ProgressWorker {
-    progress_info: HashMap<usize, Arc<Mutex<SyncProgress>>>,
+    walk_progress: Arc<Mutex<WalkProgress>>,
+    sync_progresses: HashMap<usize, Arc<Mutex<SyncProgress>>>,
 }
 
 impl ProgressWorker {
-    pub fn new(progress_info: HashMap<usize, Arc<Mutex<SyncProgress>>>) -> ProgressWorker {
-        ProgressWorker { progress_info }
+    pub fn new(
+        walk_progress: Arc<Mutex<WalkProgress>>,
+        sync_progresses: HashMap<usize, Arc<Mutex<SyncProgress>>>,
+    ) -> ProgressWorker {
+        ProgressWorker {
+            walk_progress,
+            sync_progresses,
+        }
     }
 
     pub fn start(self) -> Stats {
         let mut stats = Stats::new();
-        let spinner_style = ProgressStyle::with_template("{prefix:.bold.dim} {bar:40.green/yellow} {wide_msg}")
-            .unwrap();
         stats.start();
         let m = MultiProgress::new();
-        let count = self.progress_info.len();
-        let mut progress_bars = vec![];
+        let count = self.sync_progresses.len();
+        let mut sync_progress_bars = vec![];
 
+        let files_pb = m.add(ProgressBar::new(self.walk_progress.lock().unwrap().num_files as u64));
+        files_pb.set_prefix("[files]");   
+        let files_pb_style =
+            ProgressStyle::with_template("{prefix:.bold.dim} {bar:40.green/yellow} {pos}/{len}")
+                .unwrap(); 
+        files_pb.set_style(files_pb_style);
+
+        let size_pb = m.add(ProgressBar::new(self.walk_progress.lock().unwrap().total_size as u64));
+        size_pb.set_prefix("[size]");   
+        let size_pb_style =
+            ProgressStyle::with_template("{prefix:.bold.dim} {bar:40.green/yellow} {bytes}/{total_bytes}")
+                .unwrap(); 
+        size_pb.set_style(size_pb_style);
+
+        let sync_pb_style =
+            ProgressStyle::with_template("{prefix:.bold.dim} {bar:40.green/yellow} {wide_msg}")
+                .unwrap();
         for id in 0..count {
             let pb = m.add(ProgressBar::new(100));
             pb.set_prefix(format!("[{}/{}]", id + 1, count));
-            pb.set_style(spinner_style.clone());     
-            progress_bars.push(pb);
+            pb.set_style(sync_pb_style.clone());
+            sync_progress_bars.push(pb);
         }
         loop {
             if self
-                .progress_info
+                .sync_progresses
                 .values()
                 .all(|s| s.lock().unwrap().sync_done)
             {
                 break;
             }
-            for (id, progress) in &self.progress_info {                
-                if progress.lock().unwrap().sync_done {
-                    progress_bars[*id].finish_with_message("<done>");
+            let mut files_transfered = 0;
+            let mut size_transfered = 0;
+            for (id, sync_progress) in &self.sync_progresses {
+                files_transfered += sync_progress.lock().unwrap().num_transfered_files;
+                size_transfered += sync_progress.lock().unwrap().total_transfered_size;
+                if sync_progress.lock().unwrap().sync_done {
+                    sync_progress_bars[*id].finish_with_message("<done>");
                 } else {
-                    progress_bars[*id].set_message(progress.lock().unwrap().current_file.clone());
+                    sync_progress_bars[*id].set_message(sync_progress.lock().unwrap().current_file.clone());
                 }
             }
+            files_pb.set_length(self.walk_progress.lock().unwrap().num_files as u64);
+            files_pb.set_position(files_transfered as u64);
+            size_pb.set_length(self.walk_progress.lock().unwrap().total_size as u64);
+            size_pb.set_position(size_transfered as u64);
             thread::sleep(Duration::from_millis(10));
         }
         m.clear().unwrap();

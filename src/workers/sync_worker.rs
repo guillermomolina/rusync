@@ -24,8 +24,6 @@ pub struct SyncProgress {
     pub file_transfered_size: usize,
     /// Number of bytes transfered since the start
     pub total_transfered_size: usize,
-    /// Estimated total size of the transfer (this may change during transfer)
-    pub total_size: usize,
     /// Total number of transfered files
     pub num_transfered_files: usize,
     /// Done syncing process
@@ -39,7 +37,6 @@ impl SyncProgress {
             file_size: 0,
             file_transfered_size: 0,
             total_transfered_size: 0,
-            total_size: 0,
             num_transfered_files: 0,
             sync_done: false,
         }
@@ -62,7 +59,7 @@ pub struct SyncWorker {
     input: Arc<Mutex<Receiver<Entry>>>,
     source: PathBuf,
     destination: PathBuf,
-    sync_progress: Arc<Mutex<SyncProgress>>,
+    progress: Arc<Mutex<SyncProgress>>,
 }
 
 impl SyncWorker {
@@ -71,14 +68,14 @@ impl SyncWorker {
         source: &Path,
         destination: &Path,
         input: Arc<Mutex<Receiver<Entry>>>,
-        sync_progress: Arc<Mutex<SyncProgress>>,
+        progress: Arc<Mutex<SyncProgress>>,
     ) -> SyncWorker {
         SyncWorker {
             id,
             source: source.to_path_buf(),
             destination: destination.to_path_buf(),
             input,
-            sync_progress,
+            progress,
         }
     }
 
@@ -100,7 +97,7 @@ impl SyncWorker {
                 },
             };
         }
-        self.sync_progress.lock().unwrap().done_syncing();
+        self.progress.lock().unwrap().done_syncing();
         stats.stop();
         Ok(stats)
     }
@@ -124,7 +121,7 @@ impl SyncWorker {
 
         let dest_path = self.destination.join(&rel_path);
         let dest_entry = Entry::new(&desc, &dest_path);
-        self.sync_progress.lock().unwrap().new_file(src_entry.description());
+        self.progress.lock().unwrap().new_file(src_entry.description());
         let outcome = fsops::sync_entries(self.id, src_entry, &dest_entry, &opts)?;
         #[cfg(unix)]
         {
@@ -132,6 +129,8 @@ impl SyncWorker {
                 fsops::copy_permissions(src_entry, &dest_entry)?;
             }
         }
+        self.progress.lock().unwrap().total_transfered_size += src_entry.metadata().unwrap().len() as usize;
+        self.progress.lock().unwrap().num_transfered_files += 1;
         Ok(outcome)
     }
 }

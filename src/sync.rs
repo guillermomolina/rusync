@@ -11,7 +11,7 @@ use anyhow::{anyhow, Error, Result};
 use crate::entry::Entry;
 use crate::fsops;
 use crate::fsops::SyncOutcome::*;
-use crate::workers::{ProgressWorker, SyncWorker, WalkWorker, SyncProgress};
+use crate::workers::{ProgressWorker, SyncWorker, WalkWorker, SyncProgress, WalkProgress};
 
 #[derive(Debug)]
 pub struct Stats {
@@ -136,7 +136,8 @@ impl Syncer {
         let (walker_entry_output, syncer_input) = channel::<Entry>();
         let syncer_input = Arc::new(Mutex::new(syncer_input));
 
-        let walk_worker = WalkWorker::new(&self.source, walker_entry_output);
+        let walk_progress = Arc::new(Mutex::new(WalkProgress::new()));
+        let walk_worker = WalkWorker::new(&self.source, walker_entry_output, Arc::clone(&walk_progress));
         let mut sync_workers = vec![];
         let mut sync_progresses = HashMap::new();
         for id in 0..self.options.parallelism {
@@ -151,7 +152,7 @@ impl Syncer {
             sync_progresses.insert(id, sync_progress);
             sync_workers.push(sync_worker);
         };
-        let progress_worker = ProgressWorker::new(sync_progresses);
+        let progress_worker = ProgressWorker::new(walk_progress, sync_progresses);
         let options = self.options;
 
         let walker_thread = thread::spawn(move || walk_worker.start());

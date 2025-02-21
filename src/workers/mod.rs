@@ -4,4 +4,4 @@ mod walk_worker;
 
 pub use self::progress_worker::ProgressWorker;
 pub use self::sync_worker::{SyncWorker, SyncProgress};
-pub use self::walk_worker::WalkWorker;
+pub use self::walk_worker::{WalkWorker, WalkProgress};

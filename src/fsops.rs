@@ -1,7 +1,5 @@
 use std::fs;
 use std::fs::File;
-use std::io::Read;
-use std::io::Write;
 #[cfg(unix)]
 use std::os::unix;
 use std::path::Path;
@@ -13,8 +11,6 @@ use log::debug;
 
 use crate::entry::Entry;
 use crate::sync::SyncOptions;
-
-const BUFFER_SIZE: usize = 100 * 1024;
 
 #[derive(PartialEq, Eq, Debug)]
 pub enum SyncOutcome {
@@ -73,7 +69,12 @@ pub fn copy_permissions(src: &Entry, dest: &Entry) -> Result<(), Error> {
     Ok(())
 }
 
-fn copy_link(id: usize, src: &Entry, dest: &Entry, opts: &SyncOptions) -> Result<SyncOutcome, Error> {
+fn copy_link(
+    id: usize,
+    src: &Entry,
+    dest: &Entry,
+    opts: &SyncOptions,
+) -> Result<SyncOutcome, Error> {
     let src_target = std::fs::read_link(src.path())
         .with_context(|| format!("While copying source link '{}'", src.description()))?;
 
@@ -104,7 +105,12 @@ fn copy_link(id: usize, src: &Entry, dest: &Entry, opts: &SyncOptions) -> Result
         }
         None => {
             // OK, dest does not exist
-            debug!("[{}] Creating link from {} to {}", id, dest.description(), src.description());
+            debug!(
+                "[{}] Creating link from {} to {}",
+                id,
+                dest.description(),
+                src.description()
+            );
             outcome = SyncOutcome::SymlinkCreated;
         }
     }
@@ -129,44 +135,27 @@ fn copy_link(id: usize, src: &Entry, dest: &Entry, opts: &SyncOptions) -> Result
 }
 
 pub fn copy_entry(
-    id: usize,
     src: &Entry,
     dest: &Entry,
-    opts: &SyncOptions
+    opts: &SyncOptions,
 ) -> Result<SyncOutcome, Error> {
     let src_path = src.path();
-    let mut src_file = File::open(src_path)
-        .with_context(|| format!("Could not open '{}' for reading", src.description()))?;
+    let dest_path = dest.path();
+    if !opts.perform_dry_run {
+        let mut src_file = File::open(src_path)
+            .with_context(|| format!("Could not open '{}' for reading", src.description()))?;
+        let mut dest_file = File::create(dest_path)
+            .with_context(|| format!("Could not open '{}' for writing", dest.description()))?;
+        std::io::copy(&mut src_file, &mut dest_file).with_context(|| {
+            format!(
+                "Could not copy from '{}' to '{}'",
+                src.description(),
+                dest.description()
+            )
+        })?;
+    }
     let src_meta = src.metadata().expect("src_meta should not be None");
     let src_size = src_meta.len();
-    let dest_path = dest.path();
-    let mut dest_file = if !opts.perform_dry_run {
-        Some(File::create(dest_path)
-            .with_context(|| format!("Could not open '{}' for writing", dest.description()))?)
-    } else {
-        None
-    };
-    let mut buffer = vec![0; BUFFER_SIZE];
-    loop {
-        let num_read = src_file
-            .read(&mut buffer)
-            .with_context(|| format!("Could not read from '{}'", src.description()))?;
-        if num_read == 0 {
-            break;
-        }
-        if let Some(ref mut file) = dest_file {
-            file.write_all(&buffer[0..num_read])
-                .with_context(|| format!("Could not write to '{}'", dest.description()))?;
-        }
-        // let progress = ProgressMessage::Syncing {
-        //     description: src.description().clone(),
-        //     size: src_size as usize,
-        //     done: num_read,
-        // };
-        // let _ = progress_sender.send(progress);
-        debug!("[{}] Progress: {} {} {}", id, src.description(), src_size, num_read);
-
-    }
     Ok(SyncOutcome::FileCopied { size: src_size })
 }
 
@@ -183,11 +172,16 @@ pub fn sync_entries(
     id: usize,
     src: &Entry,
     dest: &Entry,
-    opts: &SyncOptions
+    opts: &SyncOptions,
 ) -> Result<SyncOutcome, Error> {
     // let _ = progress_sender.send(ProgressMessage::StartSync(src.description().to_string()));
 
-    debug!("[{}] Syncing {} to {}", id, src.description(), dest.description());
+    debug!(
+        "[{}] Syncing {} to {}",
+        id,
+        src.description(),
+        dest.description()
+    );
     let is_link = src.is_link().expect("src.is_link should not be None");
     if is_link {
         return copy_link(id, src, dest, &opts);
@@ -196,7 +190,7 @@ pub fn sync_entries(
     let more_recent = is_more_recent_than(src, dest);
     // TODO: check if files really are different ?
     if more_recent || different_size {
-        return copy_entry(id, src, dest, &opts);
+        return copy_entry(src, dest, &opts);
     }
     Ok(SyncOutcome::UpToDate)
 }
