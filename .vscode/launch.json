@@ -21,7 +21,7 @@
             },
             "args": [
                 //"-n",
-                "--parallelism=2",
+                "--parallelism=4",
                 //"--log-level=debug",
                 // "/home/gmolina/Temporal",
                 // "/home/gmolina/Temporal2"

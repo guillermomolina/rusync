@@ -35,19 +35,19 @@ impl ProgressWorker {
         let files_pb = m.add(ProgressBar::new(self.walk_progress.lock().unwrap().num_files as u64));
         files_pb.set_prefix("[files]");   
         let files_pb_style =
-            ProgressStyle::with_template("{prefix:.bold.dim} {bar:40.green/yellow} {pos}/{len}")
+            ProgressStyle::with_template("{prefix:.bold.dim} {bar:40.green/yellow} {pos}/{len} {elapsed_precise}")
                 .unwrap(); 
         files_pb.set_style(files_pb_style);
 
         let size_pb = m.add(ProgressBar::new(self.walk_progress.lock().unwrap().total_size as u64));
         size_pb.set_prefix("[size]");   
         let size_pb_style =
-            ProgressStyle::with_template("{prefix:.bold.dim} {bar:40.green/yellow} {bytes}/{total_bytes}")
+            ProgressStyle::with_template("{prefix:.bold.dim} {bar:40.green/yellow} <{bytes}/{total_bytes}> <{binary_bytes_per_sec}> {eta_precise}")
                 .unwrap(); 
         size_pb.set_style(size_pb_style);
 
         let sync_pb_style =
-            ProgressStyle::with_template("{prefix:.bold.dim} {bar:40.green/yellow} {wide_msg}")
+            ProgressStyle::with_template("{prefix:.bold.dim} {bar:40.green/yellow} <{bytes}/{total_bytes}> {wide_msg}")
                 .unwrap();
         for id in 0..count {
             let pb = m.add(ProgressBar::new(100));
@@ -82,6 +82,9 @@ impl ProgressWorker {
             size_pb.set_length(self.walk_progress.lock().unwrap().total_size as u64);
             size_pb.set_position(size_transfered as u64);
             thread::sleep(Duration::from_millis(100));
+        }
+        for id in 0..count {
+            sync_progress_bars[id].finish_and_clear();
         }
         m.clear().unwrap();
         stats.stop();
