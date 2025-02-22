@@ -39,7 +39,7 @@ impl ProgressWorker {
         files_pb.set_prefix("[files]");
 
         let files_pb_style = ProgressStyle::with_template(
-            "{prefix:.bold.dim} {bar:40.green/yellow} {pos}/{len} {elapsed_precise}",
+            "{prefix:.bold.dim} {bar:40.green/yellow} {pos}/{len} {elapsed_precise}, BW: <{per_sec}>, ETA: {eta_precise}",
         )
         .unwrap()
         .progress_chars(PROGRESS_CHARS);
