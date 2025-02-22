@@ -217,6 +217,7 @@ pub fn copy_chunk(
         }
         if !opts.perform_dry_run {
             dest_file.write(&buffer[..bytes_read])?;
+            dest_file.flush()?;
         }
         total_bytes_read += bytes_read;
         let mut unlocked_progress = progress.lock().unwrap();
