@@ -2,6 +2,7 @@
 
 * Split large files in chunks
 * Add copy by chunks
+* Allow more workers than cpus
 
 # 1.0.0
 

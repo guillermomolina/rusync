@@ -1,6 +1,6 @@
 use anyhow::Error;
 use clap::Parser;
-use log::info;
+use log::{info, warn};
 use rusync::sync::SyncOptions;
 use rusync::Syncer;
 use std::env;
@@ -52,9 +52,12 @@ struct Opt {
 
 fn get_parallelism(parallelism: usize) -> usize {
     let available_parallelism = std::thread::available_parallelism().unwrap().get();
-    if parallelism == 0 || parallelism > available_parallelism {
+    if parallelism == 0 {
         available_parallelism
     } else {
+        if parallelism > available_parallelism {
+            warn!("Requested parallelism is greater than available processors.");
+        }
         parallelism
     }
 }
