@@ -152,7 +152,7 @@ pub fn copy_entry(
     progress: &Arc<Mutex<SyncProgress>>,
 ) -> Result<SyncOutcome, Error> {
     let src_meta = src.metadata().expect("src_meta should not be None");
-    let src_size = src_meta.len();
+    let src_size = src_meta.len() as usize;
     if !opts.perform_dry_run {
         let src_path = src.path();
         let dest_path = dest.path();
@@ -167,7 +167,7 @@ pub fn copy_entry(
                 dest.description()
             )
         })?;
-        if bytes_copied != src_size {
+        if bytes_copied as usize != src_size {
             bail!(
                 "Could not copy all bytes from '{}' to '{}'",
                 src.description(),
@@ -182,8 +182,9 @@ pub fn copy_entry(
         dest.description(),
         src.description()
     );
-    progress.lock().unwrap().file_transfered_size = src_size as usize;
-    progress.lock().unwrap().total_transfered_size += src_size as usize;
+    let mut unlocked_progress = progress.lock().unwrap();
+    unlocked_progress.file_transfered_size = src_size;
+    unlocked_progress.total_transfered_size += src_size;
     Ok(SyncOutcome::FileCopied {
         size: src_size as usize,
     })
@@ -277,9 +278,9 @@ pub fn sync_entries(
             return copy_entry(src, dest, &opts, &progress);
         }
     } else {
-        let mut locked_progress = progress.lock().unwrap();
-        locked_progress.file_transfered_size = file_size;
-        locked_progress.total_transfered_size += file_size;    
+        let mut unlocked_progress = progress.lock().unwrap();
+        unlocked_progress.file_transfered_size = file_size;
+        unlocked_progress.total_transfered_size += file_size;    
     }
     Ok(SyncOutcome::UpToDate)
 }
