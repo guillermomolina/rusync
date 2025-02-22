@@ -68,6 +68,9 @@ impl ProgressWorker {
             for (id, sync_progress) in &self.sync_progresses {
                 files_transfered += sync_progress.lock().unwrap().num_transfered_files;
                 size_transfered += sync_progress.lock().unwrap().total_transfered_size;
+                let file_transfered_size = sync_progress.lock().unwrap().file_transfered_size;
+                sync_progress_bars[*id].set_position(file_transfered_size as u64);
+                sync_progress_bars[*id].set_length(sync_progress.lock().unwrap().file_size as u64);
                 if sync_progress.lock().unwrap().sync_done {
                     sync_progress_bars[*id].finish_with_message("<done>");
                 } else {

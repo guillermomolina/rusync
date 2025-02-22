@@ -10,6 +10,9 @@ use anyhow::{Context, Error};
 
 use crate::entry::Entry;
 use crate::fsops;
+use crate::fsops::BUFFER_SIZE;
+
+const CHUNK_SIZE: usize = BUFFER_SIZE * 1024;
 
 pub struct WalkProgress {
      /// Number of files discovered
@@ -85,10 +88,15 @@ impl WalkWorker {
         let metadata = src_entry
             .metadata()
             .with_context(|| format!("Could not read metadata from {:?}", entry.path()))?;
-        if metadata.is_file() && metadata.len() > fsops::CHUNK_SIZE as u64 {
-            let num_chunks = (metadata.len() as usize + fsops::CHUNK_SIZE - 1) / fsops::CHUNK_SIZE;
-            for chunk_id in 0..num_chunks {
-                let chunked_entry = src_entry.to_chunked_witd_id(chunk_id);
+        let file_size = metadata.len() as usize;
+        if metadata.is_file() && file_size > CHUNK_SIZE {
+            let num_chunks = (file_size + CHUNK_SIZE - 1) / CHUNK_SIZE;
+            for i in 0..num_chunks {
+                let offset = i * CHUNK_SIZE;
+                let end = std::cmp::min((i + 1) * CHUNK_SIZE , file_size);
+                let len = end - offset;
+        
+                let chunked_entry = src_entry.to_chunk(offset, len);
                 self.entry_output
                     .send(chunked_entry.clone())
                     .with_context(|| "When walking source dir: could not send entry to progress worker")?;

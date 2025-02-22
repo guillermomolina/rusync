@@ -20,7 +20,7 @@ pub struct Stats {
     /// Sum of the sizes of all the files in the source
     pub total_size: usize,
     /// Sum of the sizes of all the files that were synced
-    pub total_transfered: u64,
+    pub total_transfered: usize,
 
     /// Number of files transfered (should match `num_files`
     /// if no error)
@@ -88,11 +88,11 @@ impl Stats {
                 self.copied += 1;
                 self.total_transfered += size;
             }
-            FileChunkCopied { id, size } => {
-                if *id == 0 {
+            FileChunkCopied { offset, length } => {
+                if *offset == 0 {
                     self.copied += 1;
                 }
-                self.total_transfered += size;
+                self.total_transfered += length;
             }
             UpToDate => self.up_to_date += 1,
             SymlinkUpdated => self.symlink_updated += 1,
@@ -147,9 +147,8 @@ impl Syncer {
         let mut sync_workers = vec![];
         let mut sync_progresses = HashMap::new();
         for id in 0..self.options.parallelism {
-            let sync_progress = Arc::new(Mutex::new(SyncProgress::new()));
+            let sync_progress = Arc::new(Mutex::new(SyncProgress::new(id as u64)));
             let sync_worker = SyncWorker::new(
-                id,
                 &self.source,
                 &self.destination,
                 Arc::clone(&syncer_input),

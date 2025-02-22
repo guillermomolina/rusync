@@ -10,7 +10,8 @@ pub struct Entry {
     metadata: Option<fs::Metadata>,
     exists: bool,
     is_link: Option<bool>,
-    chunk_id: Option<usize>,
+    offset: Option<usize>,
+    length: Option<usize>,
 }
 
 impl Entry {
@@ -31,13 +32,15 @@ impl Entry {
             path: entry_path.to_path_buf(),
             exists: entry_path.exists(),
             is_link,
-            chunk_id: None,
+            offset: None,
+            length: None,
         }
     }
 
-    pub fn to_chunked_witd_id(&self, chunk_id: usize) -> Entry {
+    pub fn to_chunk(&self, offset: usize, length: usize) -> Entry {
         let mut entry = self.clone();
-        entry.chunk_id = Some(chunk_id);
+        entry.offset = Some(offset);
+        entry.length = Some(length);
         entry
     }
 
@@ -59,8 +62,24 @@ impl Entry {
         self.is_link
     }
 
-    pub fn get_chunk_id(&self) -> Option<usize> {
-        self.chunk_id
+    pub fn get_offset(&self) -> Option<usize> {
+        self.offset
+    }
+
+    pub fn get_length(&self) -> Option<usize> {
+        self.length
+    }
+
+    pub fn is_chunk(&self) -> bool {
+        self.offset.is_some() && self.length.is_some()
+    }
+
+    // pub fn is_first_chunk(&self) -> bool {
+    //     self.offset == Some(0)
+    // }
+
+    pub fn is_last_chunk(&self) -> bool {
+        self.offset == Some(self.metadata.as_ref().unwrap().len() as usize - self.length.unwrap())
     }
 }
 

@@ -16,6 +16,8 @@ use crate::sync::SyncOptions;
 use crate::sync::Stats;
 
 pub struct SyncProgress {
+    /// ID of the sync thread
+    pub sync_id: u64,
     /// Name of the file being transferred
     pub current_file: String,
     /// Size of the current file (in bytes)
@@ -31,8 +33,9 @@ pub struct SyncProgress {
 }
 
 impl SyncProgress {
-    pub fn new() -> SyncProgress {
+    pub fn new(sync_id: u64) -> SyncProgress {
         SyncProgress {
+            sync_id,
             current_file: String::new(),
             file_size: 0,
             file_transfered_size: 0,
@@ -55,7 +58,6 @@ impl SyncProgress {
 }
 
 pub struct SyncWorker {
-    id: usize,
     input: Arc<Mutex<Receiver<Entry>>>,
     source: PathBuf,
     destination: PathBuf,
@@ -64,14 +66,12 @@ pub struct SyncWorker {
 
 impl SyncWorker {
     pub fn new(
-        id: usize,
         source: &Path,
         destination: &Path,
         input: Arc<Mutex<Receiver<Entry>>>,
         progress: Arc<Mutex<SyncProgress>>,
     ) -> SyncWorker {
         SyncWorker {
-            id,
             source: source.to_path_buf(),
             destination: destination.to_path_buf(),
             input,
@@ -89,11 +89,11 @@ impl SyncWorker {
             match self.sync(&entry, &opts) {
                 Ok(outcome) => {
                     stats.add_outcome(&outcome);
-                    debug!("[{}] Synced: {}", self.id, entry.description());
+                    debug!("[{}] Synced: {}", self.progress.lock().unwrap().sync_id, entry.description());
                 },
                 Err(error) => {
                     stats.add_error();
-                    error!("[{}] Error syncing: {} {:#}", self.id, entry.description(), error);
+                    error!("[{}] Error syncing: {} {:#}", self.progress.lock().unwrap().sync_id, entry.description(), error);
                 },
             };
         }
@@ -122,15 +122,16 @@ impl SyncWorker {
         let dest_path = self.destination.join(&rel_path);
         let dest_entry = Entry::new(&desc, &dest_path);
         self.progress.lock().unwrap().new_file(src_entry.description());
-        let outcome = fsops::sync_entries(self.id, src_entry, &dest_entry, &opts)?;
+        let outcome = fsops::sync_entries(src_entry, &dest_entry, &opts, &self.progress)?;
         #[cfg(unix)]
         {
             if opts.preserve_permissions && !opts.perform_dry_run {
                 fsops::copy_permissions(src_entry, &dest_entry)?;
             }
         }
-        self.progress.lock().unwrap().total_transfered_size += src_entry.metadata().unwrap().len() as usize;
-        self.progress.lock().unwrap().num_transfered_files += 1;
+        if !src_entry.is_chunk() || src_entry.is_last_chunk() {
+            self.progress.lock().unwrap().num_transfered_files += 1;
+        }
         Ok(outcome)
     }
 }
