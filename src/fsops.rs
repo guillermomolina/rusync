@@ -267,7 +267,8 @@ pub fn sync_entries(
     }
     let different_size = has_different_size(src, dest);
     let more_recent = is_more_recent_than(src, dest);
-    progress.lock().unwrap().file_size = src.metadata().unwrap().len() as usize;
+    let file_size = src.metadata().unwrap().len() as usize;
+    progress.lock().unwrap().file_size = file_size;
     // TODO: check if files really are different ?
     if more_recent || different_size {
         if src.is_chunk() {
@@ -275,6 +276,10 @@ pub fn sync_entries(
         } else {
             return copy_entry(src, dest, &opts, &progress);
         }
+    } else {
+        let mut locked_progress = progress.lock().unwrap();
+        locked_progress.file_transfered_size = file_size;
+        locked_progress.total_transfered_size += file_size;    
     }
     Ok(SyncOutcome::UpToDate)
 }
