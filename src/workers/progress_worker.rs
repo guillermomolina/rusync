@@ -81,7 +81,7 @@ impl ProgressWorker {
             files_pb.set_position(files_transfered as u64);
             size_pb.set_length(self.walk_progress.lock().unwrap().total_size as u64);
             size_pb.set_position(size_transfered as u64);
-            thread::sleep(Duration::from_millis(10));
+            thread::sleep(Duration::from_millis(100));
         }
         m.clear().unwrap();
         stats.stop();

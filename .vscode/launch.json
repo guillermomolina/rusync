@@ -20,9 +20,9 @@
                 }
             },
             "args": [
-                // "-n",
-                "--parallelism=4",
-                // "--log-level=debug",
+                //"-n",
+                "--parallelism=2",
+                //"--log-level=debug",
                 // "/home/gmolina/Temporal",
                 // "/home/gmolina/Temporal2"
                 "/home/guille/Red/Temporal/a",

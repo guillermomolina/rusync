@@ -209,20 +209,21 @@ pub fn copy_chunk(
     progress.lock().unwrap().file_transfered_size = offset;
 
     let mut buffer = vec![0; BUFFER_SIZE];
-    let mut bytes_read = 0;
-    while bytes_read < length {
-        let read = src_file.read(&mut buffer)?;
-        if read == 0 {
+    let mut total_bytes_read = 0;
+    while total_bytes_read < length {
+        let bytes_read = src_file.read(&mut buffer)?;
+        if bytes_read == 0 {
             break;
         }
         if !opts.perform_dry_run {
-            dest_file.write(&buffer[..read])?;
+            dest_file.write(&buffer[..bytes_read])?;
         }
-        bytes_read += read;
-        progress.lock().unwrap().file_transfered_size += read;
-        progress.lock().unwrap().total_transfered_size += read;
-    }
-    if bytes_read != length {
+        total_bytes_read += bytes_read;
+        let mut unlocked_progress = progress.lock().unwrap();
+        unlocked_progress.file_transfered_size += bytes_read;
+        unlocked_progress.total_transfered_size += bytes_read;
+        }
+    if total_bytes_read != length {
         bail!("Could not read all bytes from '{}'", src.description());
     }
     debug!(
