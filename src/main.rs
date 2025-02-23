@@ -1,11 +1,13 @@
 use anyhow::Error;
 use clap::Parser;
-use log::{info, warn};
+use log::{error, info, warn};
 use rusync::sync::SyncOptions;
 use rusync::Syncer;
 use std::env;
 use std::path::PathBuf;
 use std::process;
+
+const MAX_PARALLELISM: usize = 64;
 
 #[derive(Debug, Parser)]
 #[clap(name = "rusync")]
@@ -33,9 +35,8 @@ struct Opt {
         short = 'p',
         long = "parallelism",
         help = "Allow up to n sync jobs (default is the number of online processors)",
-        default_value_t = 0
     )]
-    parallelism: usize,
+    parallelism: Option<usize>,
 
     #[clap(
         long = "log-level", 
@@ -50,13 +51,18 @@ struct Opt {
     destination: PathBuf,
 }
 
-fn get_parallelism(parallelism: usize) -> usize {
+fn get_parallelism(opt: &Opt) -> usize {
     let available_parallelism = std::thread::available_parallelism().unwrap().get();
-    if parallelism == 0 {
+    if opt.parallelism.is_none() {
         available_parallelism
     } else {
+        let parallelism = opt.parallelism.unwrap();
         if parallelism > available_parallelism {
             warn!("Requested parallelism is greater than available processors.");
+        }
+        if parallelism > MAX_PARALLELISM {
+            error!("Requested parallelism is greater than {} processors.", MAX_PARALLELISM);
+            process::exit(1);
         }
         parallelism
     }
@@ -82,7 +88,7 @@ fn main() -> Result<(), Error> {
     let options = SyncOptions {
         preserve_permissions: !opt.no_preserve_permissions,
         perform_dry_run: opt.perform_trial_run,
-        parallelism: get_parallelism(opt.parallelism),
+        parallelism: get_parallelism(&opt),
     };
     let syncer = Syncer::new(source, destination, options);
     let stats = syncer.sync();
