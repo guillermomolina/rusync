@@ -2,7 +2,7 @@ use anyhow::Error;
 use clap::Parser;
 use log::{error, info, warn};
 use rusync::sync::SyncOptions;
-use rusync::Syncer;
+use rusync::Sync;
 use std::env;
 use std::path::PathBuf;
 use std::process;
@@ -28,8 +28,8 @@ struct Opt {
     )]
     perform_trial_run: bool,
 
-    #[clap(short = 'q', long = "quiet", help = "Suppress non-error messages")]
-    no_show_progress: bool,
+    #[clap(long = "progress", help = "Show progress during transfer")]
+    show_progress: bool,
 
     #[clap(
         short = 'p',
@@ -89,15 +89,16 @@ fn main() -> Result<(), Error> {
         preserve_permissions: !opt.no_preserve_permissions,
         perform_dry_run: opt.perform_trial_run,
         parallelism: get_parallelism(&opt),
+        show_progress: opt.show_progress,
     };
-    let syncer = Syncer::new(source, destination, options);
+    let syncer = Sync::new(source, destination, options);
     let stats = syncer.sync();
     match stats {
         Err(err) => {
             eprintln!("{}", err);
             process::exit(1);
         }
-        Ok(stats) if stats.errors > 0 => {
+        Ok(errors) if errors > 0 => {
             process::exit(1);
         }
         _ => {

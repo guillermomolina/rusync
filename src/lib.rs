@@ -33,6 +33,5 @@ mod entry;
 mod fsops;
 pub mod sync;
 mod workers;
-pub use crate::sync::Stats;
 pub use crate::sync::SyncOptions;
-pub use crate::sync::Syncer;
+pub use crate::sync::Sync;

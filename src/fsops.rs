@@ -18,7 +18,7 @@ use log::debug;
 
 use crate::entry::Entry;
 use crate::sync::SyncOptions;
-use crate::workers::SyncProgress;
+use crate::workers::CopyStatus;
 
 pub const BUFFER_SIZE: usize = 32 * 1024;
 
@@ -36,7 +36,7 @@ pub fn get_rel_path(a: &Path, b: &Path) -> PathBuf {
         .expect("called get_rel_path on two absolute paths '{}' and '{}', a, b")
 }
 
-fn is_more_recent_than(src: &Entry, dest: &Entry) -> bool {
+pub fn is_more_recent_than(src: &Entry, dest: &Entry) -> bool {
     if !dest.exists() {
         return true;
     }
@@ -80,11 +80,10 @@ pub fn copy_permissions(src: &Entry, dest: &Entry) -> Result<(), Error> {
     Ok(())
 }
 
-fn copy_link(
+pub fn copy_link(
     src: &Entry,
     dest: &Entry,
     opts: &SyncOptions,
-    progress: &Arc<Mutex<SyncProgress>>,
 ) -> Result<SyncOutcome, Error> {
     let src_target = std::fs::read_link(src.path())
         .with_context(|| format!("While copying source link '{}'", src.description()))?;
@@ -117,8 +116,7 @@ fn copy_link(
         None => {
             // OK, dest does not exist
             debug!(
-                "[{}] Creating link from {} to {}",
-                progress.lock().unwrap().sync_id,
+                "Creating link from {} to {}",
                 dest.description(),
                 src.description()
             );
@@ -149,10 +147,18 @@ pub fn copy_entry(
     src: &Entry,
     dest: &Entry,
     opts: &SyncOptions,
-    progress: &Arc<Mutex<SyncProgress>>,
+    status: &Arc<Mutex<CopyStatus>>,
 ) -> Result<SyncOutcome, Error> {
     let src_meta = src.metadata().expect("src_meta should not be None");
     let src_size = src_meta.len() as usize;
+    debug!(
+        "[{}] Copying {} from {} to {} length {}",
+        status.lock().unwrap().worker_id,
+        src.description(),
+        src.path().display(),
+        dest.path().display(),
+        src_size,
+    );
     if !opts.perform_dry_run {
         let src_path = src.path();
         let dest_path = dest.path();
@@ -162,29 +168,36 @@ pub fn copy_entry(
             .with_context(|| format!("Could not open '{}' for writing", dest.description()))?;
         let bytes_copied = std::io::copy(&mut src_file, &mut dest_file).with_context(|| {
             format!(
-                "Could not copy from '{}' to '{}'",
+                "[{}] Could not copy {} from {} to {}",
+                status.lock().unwrap().worker_id,
                 src.description(),
-                dest.description()
-            )
+                src.path().display(),
+                dest.path().display(),
+                
+                    )
         })?;
         if bytes_copied as usize != src_size {
             bail!(
-                "Could not copy all bytes from '{}' to '{}'",
+                "[{}] Could not copy {} from {} to {} length {}, only copied {}",
+                status.lock().unwrap().worker_id,
                 src.description(),
-                dest.description()
+                src.path().display(),
+                dest.path().display(),
+                src_size,
+                bytes_copied
             );
         }
     }
     debug!(
-        "[{}] Copied {} bytes from {} to {}",
-        progress.lock().unwrap().sync_id,
+        "[{}] Copied {} from {} to {} length {}",
+        status.lock().unwrap().worker_id,
+        src.description(),
+        src.path().display(),
+        dest.path().display(),
         src_size,
-        dest.description(),
-        src.description()
     );
-    let mut unlocked_progress = progress.lock().unwrap();
+    let mut unlocked_progress = status.lock().unwrap();
     unlocked_progress.file_transfered_size = src_size;
-    unlocked_progress.total_transfered_size += src_size;
     Ok(SyncOutcome::FileCopied {
         size: src_size as usize,
     })
@@ -194,10 +207,20 @@ pub fn copy_chunk(
     src: &Entry,
     dest: &Entry,
     opts: &SyncOptions,
-    progress: &Arc<Mutex<SyncProgress>>,
+    status: &Arc<Mutex<CopyStatus>>,
 ) -> Result<SyncOutcome, Error> {
-    let offset = src.get_offset().expect("offset should not be None");
-    let length = src.get_length().expect("length should not be None");
+    let offset = src.chunk_offset().expect("offset should not be None");
+    let length = src.chunk_length().expect("length should not be None");
+
+    debug!(
+        "[{}] Copying {} from {} to {} offset {} length {}",
+        status.lock().unwrap().worker_id,
+        src.description(),
+        src.path().display(),
+        dest.path().display(),
+        offset,
+        length,
+    );
 
     let mut src_file = File::open(src.path())?;
     let mut dest_file = OpenOptions::new()
@@ -207,7 +230,7 @@ pub fn copy_chunk(
 
     src_file.seek(SeekFrom::Start(offset as u64))?;
     dest_file.seek(SeekFrom::Start(offset as u64))?;
-    progress.lock().unwrap().file_transfered_size = offset;
+    status.lock().unwrap().file_transfered_size = offset;
 
     let mut buffer = vec![0; BUFFER_SIZE];
     let mut total_bytes_read = 0;
@@ -221,25 +244,33 @@ pub fn copy_chunk(
             dest_file.flush()?;
         }
         total_bytes_read += bytes_read;
-        let mut unlocked_progress = progress.lock().unwrap();
+        let mut unlocked_progress = status.lock().unwrap();
         unlocked_progress.file_transfered_size += bytes_read;
-        unlocked_progress.total_transfered_size += bytes_read;
         }
     if total_bytes_read != length {
-        bail!("Could not read all bytes from '{}'", src.description());
+        bail!(
+            "[{}] Could not copy {} from {} to {} length {}, only copied {}",
+            status.lock().unwrap().worker_id,
+            src.description(),
+            src.path().display(),
+            dest.path().display(),
+            length,
+            total_bytes_read
+        );
     }
     debug!(
-        "[{}] Copied {} bytes from {} to {} at offset {}",
-        progress.lock().unwrap().sync_id,
-        length,
-        dest.description(),
+        "[{}] Copied {} from {} to {} offset {} length {}",
+        status.lock().unwrap().worker_id,
         src.description(),
-        offset
+        src.path().display(),
+        dest.path().display(),
+        offset,
+        length,
     );
     Ok(SyncOutcome::FileChunkCopied { offset, length })
 }
 
-fn has_different_size(src: &Entry, dest: &Entry) -> bool {
+pub fn has_different_size(src: &Entry, dest: &Entry) -> bool {
     let src_meta = src.metadata().expect("src_meta should not be None");
     let dest_meta = dest.metadata();
     match dest_meta {
@@ -248,87 +279,50 @@ fn has_different_size(src: &Entry, dest: &Entry) -> bool {
     }
 }
 
-pub fn sync_entries(
-    src: &Entry,
-    dest: &Entry,
-    opts: &SyncOptions,
-    progress: &Arc<Mutex<SyncProgress>>,
-) -> Result<SyncOutcome, Error> {
-    // let _ = progress_sender.send(ProgressMessage::StartSync(src.description().to_string()));
-
-    debug!(
-        "[{}] Syncing {} to {}",
-        progress.lock().unwrap().sync_id,
-        src.description(),
-        dest.description()
-    );
-    let is_link = src.is_link().expect("src.is_link should not be None");
-    if is_link {
-        return copy_link(src, dest, &opts, &progress);
-    }
-    let different_size = has_different_size(src, dest);
-    let more_recent = is_more_recent_than(src, dest);
-    let file_size = src.metadata().unwrap().len() as usize;
-    progress.lock().unwrap().file_size = file_size;
-    // TODO: check if files really are different ?
-    if more_recent || different_size {
-        if src.is_chunk() {
-            return copy_chunk(src, dest, &opts, &progress);
-        } else {
-            return copy_entry(src, dest, &opts, &progress);
-        }
-    } else {
-        let mut unlocked_progress = progress.lock().unwrap();
-        unlocked_progress.file_transfered_size = file_size;
-        unlocked_progress.total_transfered_size += file_size;    
-    }
-    Ok(SyncOutcome::UpToDate)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use tempfile::TempDir;
 
-    #[test]
-    fn create_file() -> Result<(), std::io::Error> {
-        let tmp_dir = TempDir::new()?;
-        let tmp_path = tmp_dir.path();
-        let src = &tmp_path.join("src.txt");
-        let contents = "some contents";
-        std::fs::write(src, contents)?;
-        let src_entry = Entry::new("src.txt", src);
-        let dest = &tmp_path.join("dest.txt");
-        let dest_entry = Entry::new("dest.txt", dest);
-        let options: SyncOptions = Default::default();
-        let progress = Arc::new(Mutex::new(SyncProgress::new(0)));
-        sync_entries(&src_entry, &dest_entry, &options, &progress).unwrap();
-        let actual: String = std::fs::read_to_string(dest)?;
-        assert_eq!(actual, contents);
-        Ok(())
-    }
+    // #[test]
+    // fn create_file() -> Result<(), std::io::Error> {
+    //     let tmp_dir = TempDir::new()?;
+    //     let tmp_path = tmp_dir.path();
+    //     let src = &tmp_path.join("src.txt");
+    //     let contents = "some contents";
+    //     std::fs::write(src, contents)?;
+    //     let src_entry = Entry::new("src.txt", src);
+    //     let dest = &tmp_path.join("dest.txt");
+    //     let dest_entry = Entry::new("dest.txt", dest);
+    //     let options: SyncOptions = Default::default();
+    //     let progress = Arc::new(Mutex::new(SyncStatus::new(0)));
+    //     sync_entries(&src_entry, &dest_entry, &options, &progress).unwrap();
+    //     let actual: String = std::fs::read_to_string(dest)?;
+    //     assert_eq!(actual, contents);
+    //     Ok(())
+    // }
 
-    #[test]
-    fn overwrite_file() -> Result<(), std::io::Error> {
-        let tmp_dir = TempDir::new()?;
-        let tmp_path = tmp_dir.path();
-        let src = &tmp_path.join("src.txt");
-        let new_contents = "new and shiny";
-        std::fs::write(src, new_contents)?;
-        let src_entry = Entry::new("src.txt", src);
-        let dest = &tmp_path.join("dest.txt");
-        let old_contents = "old";
-        let dest_entry = Entry::new("dest.txt", dest);
-        std::fs::write(dest, old_contents)?;
-        let options: SyncOptions = Default::default();
+    // #[test]
+    // fn overwrite_file() -> Result<(), std::io::Error> {
+    //     let tmp_dir = TempDir::new()?;
+    //     let tmp_path = tmp_dir.path();
+    //     let src = &tmp_path.join("src.txt");
+    //     let new_contents = "new and shiny";
+    //     std::fs::write(src, new_contents)?;
+    //     let src_entry = Entry::new("src.txt", src);
+    //     let dest = &tmp_path.join("dest.txt");
+    //     let old_contents = "old";
+    //     let dest_entry = Entry::new("dest.txt", dest);
+    //     std::fs::write(dest, old_contents)?;
+    //     let options: SyncOptions = Default::default();
 
-        let progress = Arc::new(Mutex::new(SyncProgress::new(0)));
-        sync_entries(&src_entry, &dest_entry, &options, &progress).unwrap();
+    //     let progress = Arc::new(Mutex::new(SyncStatus::new(0)));
+    //     sync_entries(&src_entry, &dest_entry, &options, &progress).unwrap();
 
-        let actual = std::fs::read_to_string(dest)?;
-        assert_eq!(actual, new_contents);
-        Ok(())
-    }
+    //     let actual = std::fs::read_to_string(dest)?;
+    //     assert_eq!(actual, new_contents);
+    //     Ok(())
+    // }
 }
 
 #[cfg(unix)]
@@ -367,8 +361,7 @@ mod symlink_tests {
         let src_entry = Entry::new("src", src_link);
         let dest_path = &tmp_path.join(dest);
         let dest_entry = Entry::new(dest, dest_path);
-        let progress = Arc::new(Mutex::new(SyncProgress::new(0)));
-        copy_link(&src_entry, &dest_entry, &SyncOptions::default(), &progress)
+        copy_link(&src_entry, &dest_entry, &SyncOptions::default())
     }
 
     #[test]

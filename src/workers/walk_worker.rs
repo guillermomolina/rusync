@@ -10,42 +10,38 @@ use anyhow::{Context, Error};
 
 use crate::entry::Entry;
 use crate::fsops;
-use crate::fsops::BUFFER_SIZE;
 
-const CHUNK_SIZE: usize = BUFFER_SIZE * 1024;
-
-pub struct WalkProgress {
-     /// Number of files discovered
+pub struct WalkStatus {
+    /// Number of files discovered
     pub num_files: usize,
     /// Estimated total size of the transfer (this may change during transfer)
     pub total_size: usize,
+    /// Done syncing process
+    pub walk_done: bool,
 }
 
-impl WalkProgress {
-    pub fn new() -> WalkProgress {
-        WalkProgress {
+impl WalkStatus {
+    pub fn new() -> WalkStatus {
+        WalkStatus {
             num_files: 0,
             total_size: 0,
+            walk_done: false,
         }
     }
 }
 
 pub struct WalkWorker {
-    entry_output: Sender<Entry>,
+    output: Sender<Entry>,
     source: PathBuf,
-    progress: Arc<Mutex<WalkProgress>>,
+    status: Arc<Mutex<WalkStatus>>,
 }
 
 impl WalkWorker {
-    pub fn new(
-        source: &Path,
-        entry_output: Sender<Entry>,
-        progress: Arc<Mutex<WalkProgress>>,
-    ) -> WalkWorker {
+    pub fn new(output: Sender<Entry>, source: &Path, status: Arc<Mutex<WalkStatus>>) -> WalkWorker {
         WalkWorker {
-            entry_output,
+            output,
             source: source.to_path_buf(),
-            progress,
+            status,
         }
     }
 
@@ -72,12 +68,13 @@ impl WalkWorker {
                     subdirs.push(path);
                 } else {
                     let meta = self.process_file(&entry)?;
-                    let mut progress = self.progress.lock().unwrap();
+                    let mut progress = self.status.lock().unwrap();
                     progress.num_files += 1;
                     progress.total_size += meta.len() as usize;
                 }
             }
         }
+        self.status.lock().unwrap().walk_done = true;
         Ok(())
     }
 
@@ -88,24 +85,9 @@ impl WalkWorker {
         let metadata = src_entry
             .metadata()
             .with_context(|| format!("Could not read metadata from {:?}", entry.path()))?;
-        let file_size = metadata.len() as usize;
-        if metadata.is_file() && file_size > CHUNK_SIZE {
-            let num_chunks = (file_size + CHUNK_SIZE - 1) / CHUNK_SIZE;
-            for i in 0..num_chunks {
-                let offset = i * CHUNK_SIZE;
-                let end = std::cmp::min((i + 1) * CHUNK_SIZE , file_size);
-                let len = end - offset;
-        
-                let chunked_entry = src_entry.to_chunk(offset, len);
-                self.entry_output
-                    .send(chunked_entry.clone())
-                    .with_context(|| "When walking source dir: could not send entry to progress worker")?;
-            }
-        } else {
-            self.entry_output
+        self.output
             .send(src_entry.clone())
             .with_context(|| "When walking source dir: could not send entry to progress worker")?;
-        }
         Ok(metadata.clone())
     }
 

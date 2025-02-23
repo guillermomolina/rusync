@@ -1,7 +1,9 @@
 mod progress_worker;
+mod copy_worker;
 mod sync_worker;
 mod walk_worker;
 
 pub use self::progress_worker::ProgressWorker;
-pub use self::sync_worker::{SyncWorker, SyncProgress};
-pub use self::walk_worker::{WalkWorker, WalkProgress};
+pub use self::copy_worker::{CopyWorker, CopyStatus};
+pub use self::sync_worker::{SyncWorker, SyncStatus};
+pub use self::walk_worker::{WalkWorker, WalkStatus};

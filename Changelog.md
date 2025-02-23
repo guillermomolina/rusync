@@ -1,3 +1,8 @@
+# 1.2.0
+
+* Unify Progress* and Stats* structures
+* Split SyncWorker and CopyWorker
+
 # 1.1.0
 
 * Split large files in chunks

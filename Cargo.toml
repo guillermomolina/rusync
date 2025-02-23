@@ -1,6 +1,6 @@
 [package]
 name = "rusync"
-version = "1.1.0"
+version = "1.2.0"
 authors = [
     "Dimitri Merejkowsky <dimitri@dmerej.info>",
     "Guillermo Adrián Molina <guillermoadrianmolina@hotmail.com>",

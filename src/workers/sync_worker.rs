@@ -2,6 +2,7 @@ use std::fs;
 use std::path::Path;
 use std::path::PathBuf;
 use std::sync::mpsc::Receiver;
+use std::sync::mpsc::Sender;
 use std::sync::Arc;
 use std::sync::Mutex;
 
@@ -9,15 +10,16 @@ use log::{debug, error};
 
 use anyhow::{Context, Error};
 
-use crate::entry::Entry;
+use crate::entry::{Entry, CopyEntry};
 use crate::fsops;
 use crate::fsops::SyncOutcome;
-use crate::sync::SyncOptions;
-use crate::sync::Stats;
+use crate::fsops::BUFFER_SIZE;
+// use crate::fsops::SyncOutcome::*;
+use crate::SyncOptions;
 
-pub struct SyncProgress {
-    /// ID of the sync thread
-    pub sync_id: u64,
+const CHUNK_SIZE: usize = BUFFER_SIZE * 1024;
+
+pub struct SyncStatus {
     /// Name of the file being transferred
     pub current_file: String,
     /// Size of the current file (in bytes)
@@ -30,18 +32,39 @@ pub struct SyncProgress {
     pub num_transfered_files: usize,
     /// Done syncing process
     pub sync_done: bool,
+    /// Number of files transfered (should match `num_files`
+    /// if no error)
+    pub num_synced: u64,
+    /// Number of files for which the copy was skipped
+    pub up_to_date: u64,
+    /// Number of files that were copied
+    pub copied: u64,
+    /// Number of errors
+    pub errors: u64,
+
+    /// Number of symlink created in the destination folder
+    pub symlink_created: u64,
+    /// Number of symlinks updated in the destination folder
+    pub symlink_updated: u64,
 }
 
-impl SyncProgress {
-    pub fn new(sync_id: u64) -> SyncProgress {
-        SyncProgress {
-            sync_id,
+impl SyncStatus {
+    pub fn new() -> SyncStatus {
+        SyncStatus {
             current_file: String::new(),
             file_size: 0,
             file_transfered_size: 0,
             total_transfered_size: 0,
             num_transfered_files: 0,
             sync_done: false,
+
+            num_synced: 0,
+            up_to_date: 0,
+            copied: 0,
+            errors: 0,
+
+            symlink_created: 0,
+            symlink_updated: 0,
         }
     }
 
@@ -55,51 +78,53 @@ impl SyncProgress {
         self.new_file("");
         self.sync_done = true;
     }
+
+    pub fn add_error(&mut self) {
+        self.errors += 1;
+    }
 }
 
 pub struct SyncWorker {
-    input: Arc<Mutex<Receiver<Entry>>>,
+    input: Receiver<Entry>,
+    output: Sender<CopyEntry>,
     source: PathBuf,
     destination: PathBuf,
-    progress: Arc<Mutex<SyncProgress>>,
+    status: Arc<Mutex<SyncStatus>>,
 }
 
 impl SyncWorker {
     pub fn new(
+        input: Receiver<Entry>,
+        output: Sender<CopyEntry>,
         source: &Path,
         destination: &Path,
-        input: Arc<Mutex<Receiver<Entry>>>,
-        progress: Arc<Mutex<SyncProgress>>,
+        status: Arc<Mutex<SyncStatus>>,
     ) -> SyncWorker {
         SyncWorker {
+            input,
+            output,
             source: source.to_path_buf(),
             destination: destination.to_path_buf(),
-            input,
-            progress,
+            status,
         }
     }
 
-    pub fn start(&mut self, opts: &SyncOptions) -> Result<Stats, Error> {
-        let mut stats = Stats::new();
-        stats.start();
+    pub fn start(&mut self, opts: &SyncOptions) -> () {
         while let Ok(entry) = {
-            let entry = self.input.lock().unwrap().recv();
+            let entry = self.input.recv();
             entry
         } {
             match self.sync(&entry, &opts) {
-                Ok(outcome) => {
-                    stats.add_outcome(&outcome);
-                    debug!("[{}] Synced: {}", self.progress.lock().unwrap().sync_id, entry.description());
-                },
+                Ok(_) => {
+                    debug!("Synced: {}", entry.description());
+                }
                 Err(error) => {
-                    stats.add_error();
-                    error!("[{}] Error syncing: {} {:#}", self.progress.lock().unwrap().sync_id, entry.description(), error);
-                },
+                    self.status.lock().unwrap().errors += 1;
+                    error!("Error syncing: {} {:#}", entry.description(), error);
+                }
             };
         }
-        self.progress.lock().unwrap().done_syncing();
-        stats.stop();
-        Ok(stats)
+        self.status.lock().unwrap().done_syncing();
     }
 
     fn create_missing_dest_dirs(&self, rel_path: &Path, opts: &SyncOptions) -> Result<(), Error> {
@@ -121,17 +146,64 @@ impl SyncWorker {
 
         let dest_path = self.destination.join(&rel_path);
         let dest_entry = Entry::new(&desc, &dest_path);
-        self.progress.lock().unwrap().new_file(src_entry.description());
-        let outcome = fsops::sync_entries(src_entry, &dest_entry, &opts, &self.progress)?;
+        self.status
+            .lock()
+            .unwrap()
+            .new_file(src_entry.description());
+        let outcome = self.sync_entry(src_entry, &dest_entry, &opts)?;
         #[cfg(unix)]
         {
             if opts.preserve_permissions && !opts.perform_dry_run {
                 fsops::copy_permissions(src_entry, &dest_entry)?;
             }
         }
-        if !src_entry.is_chunk() || src_entry.is_last_chunk() {
-            self.progress.lock().unwrap().num_transfered_files += 1;
-        }
         Ok(outcome)
+    }
+
+    pub fn sync_entry(
+        &mut self,
+        src: &Entry,
+        dest: &Entry,
+        opts: &SyncOptions,
+    ) -> Result<SyncOutcome, Error> {
+        debug!("Syncing {} from {} to {}", src.description(), src.path().display(), dest.path().display());
+        let is_link = src.is_link().expect("src.is_link should not be None");
+        if is_link {
+            return fsops::copy_link(src, dest, &opts);
+        }
+        let different_size = fsops::has_different_size(src, dest);
+        let more_recent = fsops::is_more_recent_than(src, dest);
+        // TODO: check if files really are different ?
+        if src.is_file().unwrap() && (more_recent || different_size) {
+            let file_size = src.length().expect("file_size should not be None");
+            if file_size > CHUNK_SIZE {
+                let num_chunks = (file_size + CHUNK_SIZE - 1) / CHUNK_SIZE;
+                for i in 0..num_chunks {
+                    let offset = i * CHUNK_SIZE;
+                    let end = std::cmp::min((i + 1) * CHUNK_SIZE , file_size);
+                    let len = end - offset;
+            
+                    let chunked_entry = src.to_chunk(offset, len);
+                    let copy_entry = CopyEntry {
+                        src: chunked_entry,
+                        dest: dest.clone(),
+                        opts: opts.clone(),
+                    };
+                    self.output
+                        .send(copy_entry)
+                        .with_context(|| "When syncing source dir: could not send entry to copy worker")?;
+                }
+            } else {
+                let copy_entry = CopyEntry {
+                    src: src.clone(),
+                    dest: dest.clone(),
+                    opts: opts.clone(),
+                };
+                self.output
+                    .send(copy_entry)
+                    .with_context(|| "When syncing source dir: could not send entry to copy worker")?;
+            }
+        }
+        Ok(SyncOutcome::UpToDate)
     }
 }

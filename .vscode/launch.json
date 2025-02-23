@@ -21,8 +21,9 @@
             },
             "args": [
                 //"-n",
-                "--parallelism=4",
-                //"--log-level=debug",
+                // "--progress",
+                "--parallelism=1",
+                "--log-level=debug",
                 // "/home/gmolina/Temporal",
                 // "/home/gmolina/Temporal2"
                 "/home/guille/Red/Temporal/a",
