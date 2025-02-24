@@ -20,16 +20,6 @@ use crate::SyncOptions;
 const CHUNK_SIZE: usize = BUFFER_SIZE * 1024;
 
 pub struct SyncStatus {
-    /// Name of the file being transferred
-    pub current_file: String,
-    /// Size of the current file (in bytes)
-    pub file_size: usize,
-    /// Number of bytes transfered for the current file
-    pub file_transfered_size: usize,
-    /// Number of bytes transfered since the start
-    pub total_transfered_size: usize,
-    /// Total number of transfered files
-    pub num_transfered_files: usize,
     /// Done syncing process
     pub sync_done: bool,
     /// Number of files transfered (should match `num_files`
@@ -37,11 +27,10 @@ pub struct SyncStatus {
     pub num_synced: u64,
     /// Number of files for which the copy was skipped
     pub up_to_date: u64,
-    /// Number of files that were copied
-    pub copied: u64,
+    /// Number of files that need to be copied
+    pub need_copy: u64,
     /// Number of errors
     pub errors: u64,
-
     /// Number of symlink created in the destination folder
     pub symlink_created: u64,
     /// Number of symlinks updated in the destination folder
@@ -51,16 +40,11 @@ pub struct SyncStatus {
 impl SyncStatus {
     pub fn new() -> SyncStatus {
         SyncStatus {
-            current_file: String::new(),
-            file_size: 0,
-            file_transfered_size: 0,
-            total_transfered_size: 0,
-            num_transfered_files: 0,
             sync_done: false,
 
             num_synced: 0,
             up_to_date: 0,
-            copied: 0,
+            need_copy: 0,
             errors: 0,
 
             symlink_created: 0,
@@ -68,19 +52,22 @@ impl SyncStatus {
         }
     }
 
-    pub fn new_file(&mut self, name: &str) {
-        self.current_file = name.to_string();
-        self.file_size = 0;
-        self.file_transfered_size = 0;
-    }
-
     pub fn done_syncing(&mut self) {
-        self.new_file("");
         self.sync_done = true;
     }
 
     pub fn add_error(&mut self) {
         self.errors += 1;
+    }
+    
+    pub fn add_outcome(&mut self, outcome: &fsops::SyncOutcome) {
+        self.num_synced += 1;
+        match outcome {
+            fsops::SyncOutcome::NeedCopy => self.need_copy += 1,
+            fsops::SyncOutcome::UpToDate => self.up_to_date += 1,
+            fsops::SyncOutcome::SymlinkUpdated => self.symlink_updated += 1,
+            fsops::SyncOutcome::SymlinkCreated => self.symlink_created += 1,
+        }
     }
 }
 
@@ -115,11 +102,12 @@ impl SyncWorker {
             entry
         } {
             match self.sync(&entry, &opts) {
-                Ok(_) => {
+                Ok(outcome) => {
+                    self.status.lock().unwrap().add_outcome(&outcome);
                     debug!("Synced: {}", entry.description());
                 }
                 Err(error) => {
-                    self.status.lock().unwrap().errors += 1;
+                    self.status.lock().unwrap().add_error();
                     error!("Error syncing: {} {:#}", entry.description(), error);
                 }
             };
@@ -146,17 +134,7 @@ impl SyncWorker {
 
         let dest_path = self.destination.join(&rel_path);
         let dest_entry = Entry::new(&desc, &dest_path);
-        self.status
-            .lock()
-            .unwrap()
-            .new_file(src_entry.description());
         let outcome = self.sync_entry(src_entry, &dest_entry, &opts)?;
-        #[cfg(unix)]
-        {
-            if opts.preserve_permissions && !opts.perform_dry_run {
-                fsops::copy_permissions(src_entry, &dest_entry)?;
-            }
-        }
         Ok(outcome)
     }
 
@@ -175,6 +153,7 @@ impl SyncWorker {
         let more_recent = fsops::is_more_recent_than(src, dest);
         // TODO: check if files really are different ?
         if src.is_file().unwrap() && (more_recent || different_size) {
+            let copy_entry = CopyEntry::new(src.clone(), dest.clone(), *opts);
             let file_size = src.length().expect("file_size should not be None");
             if file_size > CHUNK_SIZE {
                 let num_chunks = (file_size + CHUNK_SIZE - 1) / CHUNK_SIZE;
@@ -183,25 +162,22 @@ impl SyncWorker {
                     let end = std::cmp::min((i + 1) * CHUNK_SIZE , file_size);
                     let len = end - offset;
             
-                    let chunked_entry = src.to_chunk(offset, len);
-                    let copy_entry = CopyEntry {
-                        src: chunked_entry,
-                        dest: dest.clone(),
-                        opts: opts.clone(),
-                    };
+                    let chunked_entry = copy_entry.new_chunk(offset, len);
                     self.output
-                        .send(copy_entry)
+                        .send(chunked_entry)
                         .with_context(|| "When syncing source dir: could not send entry to copy worker")?;
                 }
             } else {
-                let copy_entry = CopyEntry {
-                    src: src.clone(),
-                    dest: dest.clone(),
-                    opts: opts.clone(),
-                };
                 self.output
                     .send(copy_entry)
                     .with_context(|| "When syncing source dir: could not send entry to copy worker")?;
+            }
+            return Ok(SyncOutcome::NeedCopy);
+        }
+        #[cfg(unix)]
+        {
+            if opts.preserve_permissions && !opts.perform_dry_run {
+                fsops::copy_permissions(src, &dest)?;
             }
         }
         Ok(SyncOutcome::UpToDate)

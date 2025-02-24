@@ -68,9 +68,9 @@ impl WalkWorker {
                     subdirs.push(path);
                 } else {
                     let meta = self.process_file(&entry)?;
-                    let mut progress = self.status.lock().unwrap();
-                    progress.num_files += 1;
-                    progress.total_size += meta.len() as usize;
+                    let mut status_lck = self.status.lock().unwrap();
+                    status_lck.num_files += 1;
+                    status_lck.total_size += meta.len() as usize;
                 }
             }
         }

@@ -1,5 +1,5 @@
 use std::fs;
-use std::io;
+// use std::io;
 #[cfg(unix)]
 use std::os::unix;
 #[cfg(unix)]
@@ -8,7 +8,7 @@ use std::path::Path;
 use std::path::PathBuf;
 use std::process::Command;
 
-use filetime::FileTime;
+// use filetime::FileTime;
 use tempfile::TempDir;
 
 fn assert_same_contents(a: &Path, b: &Path) {
@@ -55,16 +55,16 @@ fn setup_test(tmp_path: &Path) -> (PathBuf, PathBuf) {
     (src_path, dest_path)
 }
 
-fn make_recent(path: &Path) -> io::Result<()> {
-    let metadata = fs::metadata(path)?;
-    let atime = FileTime::from_last_access_time(&metadata);
-    let mtime = FileTime::from_last_modification_time(&metadata);
-    let mut epoch = mtime.unix_seconds();
-    epoch += 1;
-    let mtime = FileTime::from_unix_time(epoch, 0);
-    filetime::set_file_times(path, atime, mtime)?;
-    Ok(())
-}
+// fn make_recent(path: &Path) -> io::Result<()> {
+//     let metadata = fs::metadata(path)?;
+//     let atime = FileTime::from_last_access_time(&metadata);
+//     let mtime = FileTime::from_last_modification_time(&metadata);
+//     let mut epoch = mtime.unix_seconds();
+//     epoch += 1;
+//     let mtime = FileTime::from_unix_time(epoch, 0);
+//     filetime::set_file_times(path, atime, mtime)?;
+//     Ok(())
+// }
 
 fn new_test_syncer(src: &Path, dest: &Path) -> rusync::Sync {
     let options = rusync::SyncOptions {

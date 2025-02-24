@@ -12,8 +12,6 @@ pub struct Entry {
     metadata: Option<fs::Metadata>,
     exists: bool,
     is_link: Option<bool>,
-    chunk_offset: Option<usize>,
-    chunk_length: Option<usize>,
 }
 
 impl Entry {
@@ -34,16 +32,7 @@ impl Entry {
             path: entry_path.to_path_buf(),
             exists: entry_path.exists(),
             is_link,
-            chunk_offset: None,
-            chunk_length: None,
         }
-    }
-
-    pub fn to_chunk(&self, offset: usize, length: usize) -> Entry {
-        let mut entry = self.clone();
-        entry.chunk_offset = Some(offset);
-        entry.chunk_length = Some(length);
-        entry
     }
 
     pub fn description(&self) -> &String {
@@ -77,26 +66,6 @@ impl Entry {
         }
         Some(self.metadata().unwrap().len() as usize)
     }
-
-    pub fn chunk_offset(&self) -> Option<usize> {
-        self.chunk_offset
-    }
-
-    pub fn chunk_length(&self) -> Option<usize> {
-        self.chunk_length
-    }
-
-    pub fn is_chunk(&self) -> bool {
-        self.chunk_offset.is_some() && self.chunk_length.is_some()
-    }
-
-    // pub fn is_first_chunk(&self) -> bool {
-    //     self.offset == Some(0)
-    // }
-
-    pub fn is_last_chunk(&self) -> bool {
-        self.chunk_offset == Some(self.length().unwrap() - self.chunk_length.unwrap())
-    }
 }
 
 #[cfg(test)]
@@ -127,8 +96,50 @@ mod tests {
     }
 }
 
+#[derive(Clone)]
 pub struct CopyEntry {
     pub src: Entry,
     pub dest: Entry,
     pub opts: SyncOptions,
+    pub chunk_offset: Option<usize>,
+    pub chunk_length: Option<usize>,
+}
+
+impl CopyEntry {
+    pub fn new(src: Entry, dest: Entry, opts: SyncOptions) -> CopyEntry {
+        CopyEntry {
+            src,
+            dest,
+            opts,
+            chunk_offset: None,
+            chunk_length: None,
+        }
+    }
+
+    pub fn new_chunk(&self, offset: usize, length: usize) -> CopyEntry {
+        let mut entry = self.clone();
+        entry.chunk_offset = Some(offset);
+        entry.chunk_length = Some(length);
+        entry
+    }
+
+    pub fn chunk_offset(&self) -> Option<usize> {
+        self.chunk_offset
+    }
+
+    pub fn chunk_length(&self) -> Option<usize> {
+        self.chunk_length
+    }
+
+    pub fn is_chunk(&self) -> bool {
+        self.chunk_offset.is_some() && self.chunk_length.is_some()
+    }
+
+    // pub fn is_first_chunk(&self) -> bool {
+    //     self.offset == Some(0)
+    // }
+
+    pub fn is_last_chunk(&self) -> bool {
+        self.chunk_offset == Some(self.src.length().unwrap() - self.chunk_length.unwrap())
+    }
 }

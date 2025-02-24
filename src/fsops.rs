@@ -16,6 +16,7 @@ use anyhow::{bail, Context, Error};
 use filetime::FileTime;
 use log::debug;
 
+use crate::entry::CopyEntry;
 use crate::entry::Entry;
 use crate::sync::SyncOptions;
 use crate::workers::CopyStatus;
@@ -25,10 +26,15 @@ pub const BUFFER_SIZE: usize = 32 * 1024;
 #[derive(PartialEq, Eq, Debug)]
 pub enum SyncOutcome {
     UpToDate,
-    FileCopied { size: usize },
-    FileChunkCopied { offset: usize, length: usize },
+    NeedCopy,
     SymlinkUpdated,
     SymlinkCreated,
+}
+
+#[derive(PartialEq, Eq, Debug)]
+pub enum CopyOutcome {
+    FileCopied { size: usize },
+    FileChunkCopied { offset: usize, length: usize },
 }
 
 pub fn get_rel_path(a: &Path, b: &Path) -> PathBuf {
@@ -71,7 +77,7 @@ pub fn copy_permissions(src: &Entry, dest: &Entry) -> Result<(), Error> {
     let dest_file = File::open(dest.path()).with_context(|| {
         format!(
             "Could not open '{}' while copying permissions",
-            dest.description()
+            dest.path().display()
         )
     })?;
     dest_file
@@ -80,11 +86,7 @@ pub fn copy_permissions(src: &Entry, dest: &Entry) -> Result<(), Error> {
     Ok(())
 }
 
-pub fn copy_link(
-    src: &Entry,
-    dest: &Entry,
-    opts: &SyncOptions,
-) -> Result<SyncOutcome, Error> {
+pub fn copy_link(src: &Entry, dest: &Entry, opts: &SyncOptions) -> Result<SyncOutcome, Error> {
     let src_target = std::fs::read_link(src.path())
         .with_context(|| format!("While copying source link '{}'", src.description()))?;
 
@@ -144,11 +146,12 @@ pub fn copy_link(
 }
 
 pub fn copy_entry(
-    src: &Entry,
-    dest: &Entry,
-    opts: &SyncOptions,
+    copy_entry: &CopyEntry,
     status: &Arc<Mutex<CopyStatus>>,
-) -> Result<SyncOutcome, Error> {
+) -> Result<CopyOutcome, Error> {
+    let src = &copy_entry.src;
+    let dest = &copy_entry.dest;
+    let opts = &copy_entry.opts;
     let src_meta = src.metadata().expect("src_meta should not be None");
     let src_size = src_meta.len() as usize;
     debug!(
@@ -173,8 +176,7 @@ pub fn copy_entry(
                 src.description(),
                 src.path().display(),
                 dest.path().display(),
-                
-                    )
+            )
         })?;
         if bytes_copied as usize != src_size {
             bail!(
@@ -196,21 +198,27 @@ pub fn copy_entry(
         dest.path().display(),
         src_size,
     );
-    let mut unlocked_progress = status.lock().unwrap();
-    unlocked_progress.file_transfered_size = src_size;
-    Ok(SyncOutcome::FileCopied {
+    let mut status_lck = status.lock().unwrap();
+    status_lck.file_transfered_size = src_size;
+    status_lck.total_transfered_size += src_size;
+    Ok(CopyOutcome::FileCopied {
         size: src_size as usize,
     })
 }
 
 pub fn copy_chunk(
-    src: &Entry,
-    dest: &Entry,
-    opts: &SyncOptions,
+    copy_entry: &CopyEntry,
     status: &Arc<Mutex<CopyStatus>>,
-) -> Result<SyncOutcome, Error> {
-    let offset = src.chunk_offset().expect("offset should not be None");
-    let length = src.chunk_length().expect("length should not be None");
+) -> Result<CopyOutcome, Error> {
+    let src = &copy_entry.src;
+    let dest = &copy_entry.dest;
+    let opts = &copy_entry.opts;
+    let offset = copy_entry
+        .chunk_offset()
+        .expect("offset should not be None");
+    let length = copy_entry
+        .chunk_length()
+        .expect("length should not be None");
 
     debug!(
         "[{}] Copying {} from {} to {} offset {} length {}",
@@ -223,13 +231,19 @@ pub fn copy_chunk(
     );
 
     let mut src_file = File::open(src.path())?;
-    let mut dest_file = OpenOptions::new()
-        .write(true)
-        .create(true)
-        .open(dest.path())?;
-
     src_file.seek(SeekFrom::Start(offset as u64))?;
-    dest_file.seek(SeekFrom::Start(offset as u64))?;
+
+    let mut dest_file = if !opts.perform_dry_run {
+        let mut dest_file = OpenOptions::new()
+            .write(true)
+            .create(true)
+            .open(dest.path())?;
+        dest_file.seek(SeekFrom::Start(offset as u64))?;
+        Some(dest_file)
+    } else {
+        None
+    };
+
     status.lock().unwrap().file_transfered_size = offset;
 
     let mut buffer = vec![0; BUFFER_SIZE];
@@ -240,13 +254,16 @@ pub fn copy_chunk(
             break;
         }
         if !opts.perform_dry_run {
-            dest_file.write(&buffer[..bytes_read])?;
-            dest_file.flush()?;
+            if let Some(ref mut file) = dest_file {
+                file.write(&buffer[..bytes_read])?;
+                file.flush()?;
+            }
         }
         total_bytes_read += bytes_read;
-        let mut unlocked_progress = status.lock().unwrap();
-        unlocked_progress.file_transfered_size += bytes_read;
-        }
+        let mut status_lck = status.lock().unwrap();
+        status_lck.file_transfered_size += bytes_read;
+        status_lck.total_transfered_size += bytes_read;
+    }
     if total_bytes_read != length {
         bail!(
             "[{}] Could not copy {} from {} to {} length {}, only copied {}",
@@ -267,7 +284,7 @@ pub fn copy_chunk(
         offset,
         length,
     );
-    Ok(SyncOutcome::FileChunkCopied { offset, length })
+    Ok(CopyOutcome::FileChunkCopied { offset, length })
 }
 
 pub fn has_different_size(src: &Entry, dest: &Entry) -> bool {
@@ -281,8 +298,8 @@ pub fn has_different_size(src: &Entry, dest: &Entry) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use tempfile::TempDir;
+    // use super::*;
+    // use tempfile::TempDir;
 
     // #[test]
     // fn create_file() -> Result<(), std::io::Error> {

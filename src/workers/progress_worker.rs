@@ -56,8 +56,7 @@ impl ProgressWorker {
 
         let sync_pb_style = ProgressStyle::with_template(
             "{prefix:.bold.dim} {bar:40.green/yellow} <{bytes}/{total_bytes}> {wide_msg}",
-        )
-        .unwrap().progress_chars(PROGRESS_CHARS);
+        ).unwrap().progress_chars(PROGRESS_CHARS);
         for id in 0..count {
             let pb = m.add(ProgressBar::new(100));
             pb.set_prefix(format!("[{}/{}]", id + 1, count));
@@ -72,11 +71,12 @@ impl ProgressWorker {
             {
                 break;
             }
-            let mut files_transfered = 0;
+            // let mut files_transfered = self.sync_status.lock().unwrap().num_synced - self.sync_status.lock().unwrap().need_copy;
+            let mut files_transfered= 0;
             let mut size_transfered = 0;
             for (id, copy_progress) in &self.copy_statusses {
-                // files_transfered += copy_progress.lock().unwrap().num_transfered_files;
-                // size_transfered += copy_progress.lock().unwrap().total_transfered_size;
+                files_transfered += copy_progress.lock().unwrap().num_transfered_files;
+                size_transfered += copy_progress.lock().unwrap().total_transfered_size;
                 let file_transfered_size = copy_progress.lock().unwrap().file_transfered_size;
                 copy_progress_bars[*id].set_position(file_transfered_size as u64);
                 copy_progress_bars[*id].set_length(copy_progress.lock().unwrap().file_size as u64);
@@ -89,7 +89,8 @@ impl ProgressWorker {
             }
             files_pb.set_length(self.walk_status.lock().unwrap().num_files as u64);
             files_pb.set_position(files_transfered as u64);
-            size_pb.set_length(self.walk_status.lock().unwrap().total_size as u64);
+            let total_size = self.walk_status.lock().unwrap().total_size as u64;
+            size_pb.set_length(total_size);
             size_pb.set_position(size_transfered as u64);
             thread::sleep(Duration::from_millis(100));
         }

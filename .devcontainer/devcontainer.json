@@ -14,7 +14,7 @@
 		// }
 		{
 			"source": "${localEnv:HOME}${localEnv:USERPROFILE}",
-			"target": "/home/${localEnv:USER}",
+			"target": "/user",
 			"type": "bind"
 		}
 	]
