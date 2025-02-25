@@ -1,5 +1,4 @@
-use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+use std::sync::mpsc::Receiver;
 use std::thread;
 use std::time::Duration;
 
@@ -7,26 +6,33 @@ use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 
 use super::{CopyStatus, SyncStatus, WalkStatus};
 
+#[doc(hidden)]
+pub enum ProgressMessage {
+    WalkProgress(WalkStatus),
+    SyncProgress(SyncStatus),
+    CopyProgress(CopyStatus),
+}
+
 pub struct ProgressWorker {
-    walk_status: Arc<Mutex<WalkStatus>>,
-    sync_status: Arc<Mutex<SyncStatus>>,
-    copy_statusses: HashMap<usize, Arc<Mutex<CopyStatus>>>,
+    input: Receiver<ProgressMessage>,
 }
 
 impl ProgressWorker {
     pub fn new(
-        walk_status: Arc<Mutex<WalkStatus>>,
-        sync_status: Arc<Mutex<SyncStatus>>,
-        copy_statusses: HashMap<usize, Arc<Mutex<CopyStatus>>>,
+        input: Receiver<ProgressMessage>,
     ) -> ProgressWorker {
         ProgressWorker {
-            walk_status,
-            sync_status,
-            copy_statusses
+            input,
+         }
+    }
+
+    pub fn start(mut self) {
+        let total_files = 0;
+        for progress in self.input.iter() {
         }
     }
 
-    pub fn start(self) -> () {
+ /*   pub fn start(self) -> () {
         const PROGRESS_CHARS: &str = "█▉▊▋▌▍▎▏  ";
         let m = MultiProgress::new();
         let count = self.copy_statusses.len();
@@ -100,4 +106,5 @@ impl ProgressWorker {
         // m.clear().unwrap();
         // m.println("done").unwrap();
     }
+*/
 }

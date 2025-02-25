@@ -3,17 +3,18 @@ use std::fs::DirEntry;
 use std::path::Path;
 use std::path::PathBuf;
 use std::sync::mpsc::Sender;
-use std::sync::Arc;
-use std::sync::Mutex;
 
 use anyhow::{Context, Error};
 
 use crate::entry::Entry;
 use crate::fsops;
 
+#[derive(Clone)]
 pub struct WalkStatus {
     /// Number of files discovered
-    pub num_files: usize,
+    pub num_files: u64,
+    /// Number of direwctories discovered
+    pub num_dirs: u64,
     /// Estimated total size of the transfer (this may change during transfer)
     pub total_size: usize,
     /// Done syncing process
@@ -24,6 +25,7 @@ impl WalkStatus {
     pub fn new() -> WalkStatus {
         WalkStatus {
             num_files: 0,
+            num_dirs: 0,
             total_size: 0,
             walk_done: false,
         }
@@ -33,19 +35,19 @@ impl WalkStatus {
 pub struct WalkWorker {
     output: Sender<Entry>,
     source: PathBuf,
-    status: Arc<Mutex<WalkStatus>>,
+    status: WalkStatus,
 }
 
 impl WalkWorker {
-    pub fn new(output: Sender<Entry>, source: &Path, status: Arc<Mutex<WalkStatus>>) -> WalkWorker {
+    pub fn new(output: Sender<Entry>, source: &Path) -> WalkWorker {
         WalkWorker {
             output,
             source: source.to_path_buf(),
-            status,
+            status: WalkStatus::new(),
         }
     }
 
-    fn walk(&self) -> Result<(), Error> {
+    pub fn start(&mut self) -> Result<WalkStatus, Error> {
         let mut subdirs: Vec<PathBuf> = vec![self.source.to_path_buf()];
         while let Some(subdir) = subdirs.pop() {
             // We just checked that subdirs is *not* empty, so calling pop() is safe
@@ -66,16 +68,16 @@ impl WalkWorker {
                 let path = entry.path();
                 if path.is_dir() {
                     subdirs.push(path);
+                    self.status.num_dirs += 1;
                 } else {
                     let meta = self.process_file(&entry)?;
-                    let mut status_lck = self.status.lock().unwrap();
-                    status_lck.num_files += 1;
-                    status_lck.total_size += meta.len() as usize;
+                    self.status.num_files += 1;
+                    self.status.total_size += meta.len() as usize;
                 }
             }
         }
-        self.status.lock().unwrap().walk_done = true;
-        Ok(())
+        self.status.walk_done = true;
+        Ok(self.status.clone())
     }
 
     fn process_file(&self, entry: &DirEntry) -> Result<fs::Metadata, Error> {
@@ -89,12 +91,5 @@ impl WalkWorker {
             .send(src_entry.clone())
             .with_context(|| "When walking source dir: could not send entry to progress worker")?;
         Ok(metadata.clone())
-    }
-
-    pub fn start(&self) {
-        let outcome = &self.walk();
-        if outcome.is_err() {
-            // Send err to output
-        }
     }
 }

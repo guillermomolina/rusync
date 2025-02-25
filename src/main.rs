@@ -31,6 +31,9 @@ struct Opt {
     #[clap(long = "progress", help = "Show progress during transfer")]
     show_progress: bool,
 
+    #[clap(long = "stats", help = "Give some file-transfer stats")]
+    show_stats: bool,
+
     #[clap(
         short = 'p',
         long = "parallelism",
@@ -90,6 +93,7 @@ fn main() -> Result<(), Error> {
         perform_dry_run: opt.perform_trial_run,
         parallelism: get_parallelism(&opt),
         show_progress: opt.show_progress,
+        show_stats: opt.show_stats,
     };
     let syncer = Sync::new(source, destination, options);
     let stats = syncer.sync();

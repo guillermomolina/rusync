@@ -21,9 +21,10 @@
             },
             "args": [
                 // "-n",
-                "--progress",
-                "--parallelism=1",
-                // "--log-level=debug",
+                // "--progress",
+                "--stats",
+                "--parallelism=3",
+                "--log-level=info",
                 "/user/Temporal",
                 "/user/Temporal2"
             ],

@@ -72,6 +72,7 @@ fn new_test_syncer(src: &Path, dest: &Path) -> rusync::Sync {
         perform_dry_run: false,
         parallelism: 1,
         show_progress: false,
+        show_stats: false,
     };
     rusync::Sync::new(src, dest, options)
 }
@@ -132,6 +133,7 @@ fn do_not_preserve_permissions() -> Result<(), std::io::Error> {
         perform_dry_run: false,
         parallelism: 1,
         show_progress: false,
+        show_stats: false,
     };
     let syncer = rusync::Sync::new(
         &src_path,
@@ -215,6 +217,7 @@ fn dry_run() -> Result<(), std::io::Error> {
         perform_dry_run: true,
         parallelism : 1,
         show_progress: false,
+        show_stats: false,
     };
     let syncer = rusync::Sync::new(
         &src_path,
