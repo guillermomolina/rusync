@@ -3,6 +3,8 @@ use std::path::Path;
 use std::path::PathBuf;
 use std::sync::mpsc::Receiver;
 use std::sync::mpsc::Sender;
+use std::sync::Arc;
+use std::sync::Mutex;
 
 use log::{debug, error};
 
@@ -14,6 +16,7 @@ use crate::fsops::SyncOutcome;
 use crate::SyncOptions;
 
 use super::copy_worker::BUFFER_SIZE;
+use super::ProgressMessage;
 
 const CHUNK_SIZE: usize = BUFFER_SIZE * 1024;
 
@@ -90,25 +93,28 @@ impl SyncStatus {
 }
 
 pub struct SyncWorker {
-    input: Receiver<Entry>,
-    output: Sender<CopyEntry>,
     source: PathBuf,
     destination: PathBuf,
+    input: Receiver<Entry>,
+    output: Sender<CopyEntry>,
+    progress: Option<Arc<Mutex<Sender<ProgressMessage>>>>,
     status: SyncStatus,
 }
 
 impl SyncWorker {
     pub fn new(
-        input: Receiver<Entry>,
-        output: Sender<CopyEntry>,
         source: &Path,
         destination: &Path,
+        input: Receiver<Entry>,
+        output: Sender<CopyEntry>,
+        progress: Option<Arc<Mutex<Sender<ProgressMessage>>>>,
     ) -> SyncWorker {
         SyncWorker {
-            input,
-            output,
             source: source.to_path_buf(),
             destination: destination.to_path_buf(),
+            input,
+            output,
+            progress,
             status: SyncStatus::new(),
         }
     }
@@ -128,8 +134,10 @@ impl SyncWorker {
                     error!("Error syncing: {} {:#}", entry.description(), error);
                 }
             };
+            self.send_progress()
         }
         self.status.done_syncing();
+        self.send_progress();
         Ok(self.status.clone())
     }
 
@@ -204,5 +212,16 @@ impl SyncWorker {
             }
         }
         Ok(SyncOutcome::UpToDate { size: file_size })
+    }
+
+    fn send_progress(&self) {
+        if self.progress.is_some() {
+            let _ = self.progress
+            .as_ref()
+            .unwrap()
+            .lock()
+            .unwrap()
+            .send(ProgressMessage::SyncProgress(self.status.clone()));
+        }
     }
 }

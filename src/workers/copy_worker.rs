@@ -5,6 +5,7 @@ use std::io::Seek;
 use std::io::SeekFrom;
 use std::io::Write;
 use std::sync::mpsc::Receiver;
+use std::sync::mpsc::Sender;
 use std::sync::Arc;
 use std::sync::Mutex;
 
@@ -17,6 +18,8 @@ use anyhow::Error;
 use crate::entry::CopyEntry;
 use crate::fsops;
 use crate::fsops::CopyOutcome;
+
+use super::ProgressMessage;
 
 pub const BUFFER_SIZE: usize = 32 * 1024;
 
@@ -63,14 +66,20 @@ impl CopyStatus {
 pub struct CopyWorker {
     id: usize,
     input: Arc<Mutex<Receiver<CopyEntry>>>,
+    progress: Option<Arc<Mutex<Sender<ProgressMessage>>>>,
     status: CopyStatus,
 }
 
 impl CopyWorker {
-    pub fn new(id: usize, input: Arc<Mutex<Receiver<CopyEntry>>>) -> CopyWorker {
+    pub fn new(
+        id: usize,
+        input: Arc<Mutex<Receiver<CopyEntry>>>,
+        progress: Option<Arc<Mutex<Sender<ProgressMessage>>>>,
+    ) -> CopyWorker {
         CopyWorker {
             id,
             input,
+            progress,
             status: CopyStatus::new(),
         }
     }
@@ -80,15 +89,12 @@ impl CopyWorker {
             let copy_entry = self.input.lock().unwrap().recv();
             copy_entry
         } {
+            self.send_progress();
             match self.copy(&copy_entry) {
                 Ok(_) => {
                     if !copy_entry.is_chunk() || copy_entry.is_last_chunk() {
                         self.status.num_transfered_files += 1;
-                        debug!(
-                            "[{}] Copied: {}",
-                            self.id,
-                            copy_entry.src.description()
-                        );
+                        debug!("[{}] Copied: {}", self.id, copy_entry.src.description());
                     }
                 }
                 Err(error) => {
@@ -100,8 +106,10 @@ impl CopyWorker {
                     );
                 }
             };
+            self.send_progress();
         }
         self.status.done_copying();
+        self.send_progress();
         Ok(self.status.clone())
     }
 
@@ -235,6 +243,7 @@ impl CopyWorker {
             total_bytes_read += bytes_read;
             self.status.file_transfered_size += bytes_read;
             self.status.total_transfered_size += bytes_read;
+            self.send_progress();
         }
         if total_bytes_read != length {
             bail!(
@@ -257,5 +266,16 @@ impl CopyWorker {
             length,
         );
         Ok(CopyOutcome::FileChunkCopied { offset, length })
+    }
+
+    fn send_progress(&self) {
+        if self.progress.is_some() {
+            let _ = self.progress
+            .as_ref()
+            .unwrap()
+            .lock()
+            .unwrap()
+            .send(ProgressMessage::CopyProgress(self.id, self.status.clone()));
+        }
     }
 }

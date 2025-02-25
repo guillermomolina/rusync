@@ -8,13 +8,11 @@ use std::time::Duration;
 use std::time::Instant;
 
 use anyhow::{anyhow, Error};
-use indicatif::{ HumanBytes, HumanCount, HumanDuration };
+use indicatif::{HumanBytes, HumanCount, HumanDuration};
 
 use crate::entry::CopyEntry;
 use crate::entry::Entry;
-use crate::workers::{
-    CopyWorker, ProgressWorker, ProgressMessage, SyncWorker, WalkWorker,
-};
+use crate::workers::{CopyWorker, ProgressMessage, ProgressWorker, SyncWorker, WalkWorker};
 
 #[derive(Copy, Clone)]
 pub struct SyncOptions {
@@ -54,20 +52,42 @@ impl Sync {
     }
 
     pub fn sync(self) -> Result<u64, Error> {
-        let (walk_output, sync_input) = channel::<Entry>();
         let num_copy_workers = self.options.parallelism;
+        let mut walk_progress_option = None;
+        let mut sync_progress_option = None;
+        let mut copy_progresses_options = vec![None; num_copy_workers];
+        let mut progress_thread = None;
+        if self.options.show_progress {
+            let (progress_output, progress_input) = channel::<ProgressMessage>();
+            let progress_worker = ProgressWorker::new(num_copy_workers, progress_input);
+            progress_thread = Some(thread::spawn(|| progress_worker.start()));
 
-        let mut walk_worker = WalkWorker::new(walk_output, &self.source);
+            walk_progress_option = Some(Arc::new(Mutex::new(progress_output.clone())));
+            sync_progress_option = Some(Arc::new(Mutex::new(progress_output.clone())));
+
+            for id in 0..num_copy_workers {
+                copy_progresses_options[id] = Some(Arc::new(Mutex::new(progress_output.clone())));
+            }
+        }
+
+        let (walk_output, sync_input) = channel::<Entry>();
+        let mut walk_worker = WalkWorker::new(&self.source, walk_output, walk_progress_option);
 
         let (sync_output, copy_input) = channel::<CopyEntry>();
         let copy_input = Arc::new(Mutex::new(copy_input));
 
-        let mut sync_worker =
-            SyncWorker::new(sync_input, sync_output, &self.source, &self.destination);
+        let mut sync_worker = SyncWorker::new(
+            &self.source,
+            &self.destination,
+            sync_input,
+            sync_output,
+            sync_progress_option,
+        );
 
         let mut copy_workers = vec![];
         for id in 0..num_copy_workers {
-            let copy_worker = CopyWorker::new(id, Arc::clone(&copy_input));
+            let copy_worker =
+                CopyWorker::new(id, Arc::clone(&copy_input), copy_progresses_options[id].clone());
             copy_workers.push(copy_worker);
         }
 
@@ -79,14 +99,6 @@ impl Sync {
             let copy_thread = thread::spawn(move || copy_worker.start());
             copy_threads.push(copy_thread);
         }
-
-        let progress_thread = if self.options.show_progress {
-            let (progress_output, progress_input) = channel::<ProgressMessage>();
-            let progress_worker = ProgressWorker::new(num_copy_workers, progress_input);
-            Some(thread::spawn(|| progress_worker.start()))
-        } else {
-            None
-        };
 
         let walk_status = walk_thread
             .join()
@@ -116,7 +128,10 @@ impl Sync {
         }
 
         if self.options.show_stats {
-            println!("Elapsed time: {}s", HumanDuration(Duration::from_secs(elapsed.as_secs())).to_string());
+            println!(
+                "Elapsed time: {}s",
+                HumanDuration(Duration::from_secs(elapsed.as_secs())).to_string()
+            );
 
             let mut copied_files = 0;
             let mut copied_size = 0;
@@ -124,36 +139,79 @@ impl Sync {
                 copied_files += copy_status.num_transfered_files;
                 copied_size += copy_status.total_transfered_size;
             }
-            println!("Files or links discovered: {}", HumanCount(walk_status.num_files).to_string());
-            println!("Directories discovered: {}", HumanCount(walk_status.num_dirs).to_string());
+            println!(
+                "Files or links discovered: {}",
+                HumanCount(walk_status.num_files).to_string()
+            );
+            println!(
+                "Directories discovered: {}",
+                HumanCount(walk_status.num_dirs).to_string()
+            );
             println!("Symbolic link sync:");
-            println!("\tTotal: {}", HumanCount(sync_status.num_symlinks()).to_string());
-            println!("\tCreated: {}", HumanCount(sync_status.symlink_created).to_string());
-            println!("\tUpdated: {}", HumanCount(sync_status.symlink_updated).to_string());
-            println!("\tUp to date: {}", HumanCount(sync_status.symlink_up_to_date).to_string());
+            println!(
+                "\tTotal: {}",
+                HumanCount(sync_status.num_symlinks()).to_string()
+            );
+            println!(
+                "\tCreated: {}",
+                HumanCount(sync_status.symlink_created).to_string()
+            );
+            println!(
+                "\tUpdated: {}",
+                HumanCount(sync_status.symlink_updated).to_string()
+            );
+            println!(
+                "\tUp to date: {}",
+                HumanCount(sync_status.symlink_up_to_date).to_string()
+            );
             println!("File sync:");
-            println!("\tTotal: {}", HumanCount(sync_status.num_files()).to_string());
-            println!("\tUp to date: {}", HumanCount(sync_status.num_up_to_date).to_string());
+            println!(
+                "\tTotal: {}",
+                HumanCount(sync_status.num_files()).to_string()
+            );
+            println!(
+                "\tUp to date: {}",
+                HumanCount(sync_status.num_up_to_date).to_string()
+            );
             println!("\tErrors: {}", HumanCount(sync_status.errors).to_string());
             println!("\tCopied: {}", HumanCount(copied_files).to_string());
             for id in 0..num_copy_workers as usize {
-                println!("\tCopied by worker #{}: {}", id, HumanCount(copy_statuses[id].num_transfered_files).to_string());
+                println!(
+                    "\tCopied by worker #{}: {}",
+                    id,
+                    HumanCount(copy_statuses[id].num_transfered_files).to_string()
+                );
             }
-            
+
             println!("File data size:");
-            println!("\tTotal: {}", HumanBytes(walk_status.total_size as u64).to_string());
-            println!("\tUp to date: {}", HumanBytes(sync_status.up_to_date_size as u64).to_string());
+            println!(
+                "\tTotal: {}",
+                HumanBytes(walk_status.total_size as u64).to_string()
+            );
+            println!(
+                "\tUp to date: {}",
+                HumanBytes(sync_status.up_to_date_size as u64).to_string()
+            );
             println!("\tCopied: {}", HumanBytes(copied_size as u64).to_string());
             for id in 0..num_copy_workers as usize {
-                println!("\tCopied by worker #{}: {}", id, HumanBytes(copy_statuses[id].total_transfered_size as u64).to_string());
+                println!(
+                    "\tCopied by worker #{}: {}",
+                    id,
+                    HumanBytes(copy_statuses[id].total_transfered_size as u64).to_string()
+                );
             }
             println!("Bandwidth:");
             let elapsed_precise = elapsed.as_secs_f64();
             let total_bandwith = (copied_size as f64 / elapsed_precise) as u64;
             println!("\tTotal: {}/s", HumanBytes(total_bandwith).to_string());
             for id in 0..num_copy_workers as usize {
-                let copied_bandwith_worker = (copy_statuses[id].total_transfered_size as f64 / elapsed_precise) as u64;
-                println!("\tCopied by worker #{}: {}/s", id, HumanBytes(copied_bandwith_worker).to_string());
+                let copied_bandwith_worker =
+                    (copy_statuses[id].total_transfered_size as f64 / elapsed_precise) as u64;
+                println!(
+                    "\tCopied by worker #{}: {}/s",
+                    id,
+                    HumanBytes(copied_bandwith_worker).to_string()
+                );
             }
         }
         Ok(sync_status.errors)

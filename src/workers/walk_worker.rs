@@ -3,11 +3,15 @@ use std::fs::DirEntry;
 use std::path::Path;
 use std::path::PathBuf;
 use std::sync::mpsc::Sender;
+use std::sync::Arc;
+use std::sync::Mutex;
 
 use anyhow::{Context, Error};
 
 use crate::entry::Entry;
 use crate::fsops;
+
+use super::ProgressMessage;
 
 #[derive(Clone)]
 pub struct WalkStatus {
@@ -33,16 +37,22 @@ impl WalkStatus {
 }
 
 pub struct WalkWorker {
-    output: Sender<Entry>,
     source: PathBuf,
+    output: Sender<Entry>,
+    progress: Option<Arc<Mutex<Sender<ProgressMessage>>>>,
     status: WalkStatus,
 }
 
 impl WalkWorker {
-    pub fn new(output: Sender<Entry>, source: &Path) -> WalkWorker {
+    pub fn new(
+        source: &Path,
+        output: Sender<Entry>,
+        progress: Option<Arc<Mutex<Sender<ProgressMessage>>>>,
+    ) -> WalkWorker {
         WalkWorker {
-            output,
             source: source.to_path_buf(),
+            output,
+            progress,
             status: WalkStatus::new(),
         }
     }
@@ -74,9 +84,11 @@ impl WalkWorker {
                     self.status.num_files += 1;
                     self.status.total_size += meta.len() as usize;
                 }
+                self.send_progress()
             }
         }
         self.status.walk_done = true;
+        self.send_progress();
         Ok(self.status.clone())
     }
 
@@ -89,7 +101,18 @@ impl WalkWorker {
             .with_context(|| format!("Could not read metadata from {:?}", entry.path()))?;
         self.output
             .send(src_entry.clone())
-            .with_context(|| "When walking source dir: could not send entry to progress worker")?;
+            .with_context(|| "When walking source dir: could not send entry to sync worker")?;
         Ok(metadata.clone())
+    }
+
+    fn send_progress(&self) {
+        if self.progress.is_some() {
+            let _ = self.progress
+            .as_ref()
+            .unwrap()
+            .lock()
+            .unwrap()
+            .send(ProgressMessage::WalkProgress(self.status.clone()));
+        }
     }
 }

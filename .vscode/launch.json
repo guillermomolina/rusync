@@ -21,9 +21,9 @@
             },
             "args": [
                 // "-n",
-                // "--progress",
+                "--progress",
                 "--stats",
-                "--parallelism=3",
+                "--parallelism=2",
                 "--log-level=info",
                 "/user/Temporal",
                 "/user/Temporal2"
