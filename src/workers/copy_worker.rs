@@ -22,8 +22,6 @@ pub const BUFFER_SIZE: usize = 32 * 1024;
 
 #[derive(Clone)]
 pub struct CopyStatus {
-    /// ID of the sync thread
-    pub worker_id: u64,
     /// Name of the file being transferred
     pub current_file: String,
     /// Size of the current file (in bytes)
@@ -39,9 +37,8 @@ pub struct CopyStatus {
 }
 
 impl CopyStatus {
-    pub fn new(worker_id: u64) -> CopyStatus {
+    pub fn new() -> CopyStatus {
         CopyStatus {
-            worker_id,
             current_file: String::new(),
             file_size: 0,
             file_transfered_size: 0,
@@ -64,15 +61,17 @@ impl CopyStatus {
 }
 
 pub struct CopyWorker {
+    id: usize,
     input: Arc<Mutex<Receiver<CopyEntry>>>,
     status: CopyStatus,
 }
 
 impl CopyWorker {
-    pub fn new(id: u64, input: Arc<Mutex<Receiver<CopyEntry>>>) -> CopyWorker {
+    pub fn new(id: usize, input: Arc<Mutex<Receiver<CopyEntry>>>) -> CopyWorker {
         CopyWorker {
+            id,
             input,
-            status: CopyStatus::new(id),
+            status: CopyStatus::new(),
         }
     }
 
@@ -87,7 +86,7 @@ impl CopyWorker {
                         self.status.num_transfered_files += 1;
                         debug!(
                             "[{}] Copied: {}",
-                            self.status.worker_id,
+                            self.id,
                             copy_entry.src.description()
                         );
                     }
@@ -95,7 +94,7 @@ impl CopyWorker {
                 Err(error) => {
                     error!(
                         "[{}] Error copying: {} {:#}",
-                        self.status.worker_id,
+                        self.id,
                         copy_entry.src.description(),
                         error
                     );
@@ -134,7 +133,7 @@ impl CopyWorker {
         let src_size = src_meta.len() as usize;
         debug!(
             "[{}] Copying {} from {} to {} length {}",
-            self.status.worker_id,
+            self.id,
             src.description(),
             src.path().display(),
             dest.path().display(),
@@ -150,7 +149,7 @@ impl CopyWorker {
             let bytes_copied = std::io::copy(&mut src_file, &mut dest_file).with_context(|| {
                 format!(
                     "[{}] Could not copy {} from {} to {}",
-                    self.status.worker_id,
+                    self.id,
                     src.description(),
                     src.path().display(),
                     dest.path().display(),
@@ -159,7 +158,7 @@ impl CopyWorker {
             if bytes_copied as usize != src_size {
                 bail!(
                     "[{}] Could not copy {} from {} to {} length {}, only copied {}",
-                    self.status.worker_id,
+                    self.id,
                     src.description(),
                     src.path().display(),
                     dest.path().display(),
@@ -170,7 +169,7 @@ impl CopyWorker {
         }
         debug!(
             "[{}] Copied {} from {} to {} length {}",
-            self.status.worker_id,
+            self.id,
             src.description(),
             src.path().display(),
             dest.path().display(),
@@ -196,7 +195,7 @@ impl CopyWorker {
 
         debug!(
             "[{}] Copying {} from {} to {} offset {} length {}",
-            self.status.worker_id,
+            self.id,
             src.description(),
             src.path().display(),
             dest.path().display(),
@@ -240,7 +239,7 @@ impl CopyWorker {
         if total_bytes_read != length {
             bail!(
                 "[{}] Could not copy {} from {} to {} length {}, only copied {}",
-                self.status.worker_id,
+                self.id,
                 src.description(),
                 src.path().display(),
                 dest.path().display(),
@@ -250,7 +249,7 @@ impl CopyWorker {
         }
         debug!(
             "[{}] Copied {} from {} to {} offset {} length {}",
-            self.status.worker_id,
+            self.id,
             src.description(),
             src.path().display(),
             dest.path().display(),

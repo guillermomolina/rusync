@@ -54,7 +54,8 @@ impl Sync {
     }
 
     pub fn sync(self) -> Result<u64, Error> {
-         let (walk_output, sync_input) = channel::<Entry>();
+        let (walk_output, sync_input) = channel::<Entry>();
+        let num_copy_workers = self.options.parallelism;
 
         let mut walk_worker = WalkWorker::new(walk_output, &self.source);
 
@@ -65,8 +66,8 @@ impl Sync {
             SyncWorker::new(sync_input, sync_output, &self.source, &self.destination);
 
         let mut copy_workers = vec![];
-        for id in 0..self.options.parallelism {
-            let copy_worker = CopyWorker::new(id as u64, Arc::clone(&copy_input));
+        for id in 0..num_copy_workers {
+            let copy_worker = CopyWorker::new(id, Arc::clone(&copy_input));
             copy_workers.push(copy_worker);
         }
 
@@ -81,7 +82,7 @@ impl Sync {
 
         let progress_thread = if self.options.show_progress {
             let (progress_output, progress_input) = channel::<ProgressMessage>();
-            let progress_worker = ProgressWorker::new(progress_input);
+            let progress_worker = ProgressWorker::new(num_copy_workers, progress_input);
             Some(thread::spawn(|| progress_worker.start()))
         } else {
             None
@@ -135,7 +136,7 @@ impl Sync {
             println!("\tUp to date: {}", HumanCount(sync_status.num_up_to_date).to_string());
             println!("\tErrors: {}", HumanCount(sync_status.errors).to_string());
             println!("\tCopied: {}", HumanCount(copied_files).to_string());
-            for id in 0..self.options.parallelism {
+            for id in 0..num_copy_workers as usize {
                 println!("\tCopied by worker #{}: {}", id, HumanCount(copy_statuses[id].num_transfered_files).to_string());
             }
             
@@ -143,14 +144,14 @@ impl Sync {
             println!("\tTotal: {}", HumanBytes(walk_status.total_size as u64).to_string());
             println!("\tUp to date: {}", HumanBytes(sync_status.up_to_date_size as u64).to_string());
             println!("\tCopied: {}", HumanBytes(copied_size as u64).to_string());
-            for id in 0..self.options.parallelism {
+            for id in 0..num_copy_workers as usize {
                 println!("\tCopied by worker #{}: {}", id, HumanBytes(copy_statuses[id].total_transfered_size as u64).to_string());
             }
             println!("Bandwidth:");
             let elapsed_precise = elapsed.as_secs_f64();
             let total_bandwith = (copied_size as f64 / elapsed_precise) as u64;
             println!("\tTotal: {}/s", HumanBytes(total_bandwith).to_string());
-            for id in 0..self.options.parallelism {
+            for id in 0..num_copy_workers as usize {
                 let copied_bandwith_worker = (copy_statuses[id].total_transfered_size as f64 / elapsed_precise) as u64;
                 println!("\tCopied by worker #{}: {}/s", id, HumanBytes(copied_bandwith_worker).to_string());
             }
