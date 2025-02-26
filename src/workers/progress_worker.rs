@@ -3,6 +3,8 @@ use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 
 use super::{CopyStatus, SyncStatus, WalkStatus};
 
+const PROGRESS_CHARS: &str = "█▉▊▋▌▍▎▏  ";
+
 #[doc(hidden)]
 pub enum ProgressMessage {
     WalkProgress(WalkStatus),
@@ -72,11 +74,9 @@ impl ProgressWorker {
     }
 
     pub fn initialize(&mut self) {
-        const PROGRESS_CHARS: &str = "█▉▊▋▌▍▎▏  ";
-
         self.files_pb.set_prefix("[files]");
         let files_pb_style = ProgressStyle::with_template(
-            "{prefix:.bold.dim} {bar:40.green/yellow} <{pos}/{len} @ {per_sec}> {elapsed_precise}, ETA: {eta_precise}",
+            "{prefix:.bold.dim} {bar:40.green/yellow} <{pos}/{len}> {elapsed_precise}, ETA: {eta_precise}",
         )
         .unwrap()
         .progress_chars(PROGRESS_CHARS);
@@ -85,7 +85,7 @@ impl ProgressWorker {
 
         self.size_pb.set_prefix("[size]");
         let size_pb_style =
-            ProgressStyle::with_template("{prefix:.bold.dim} {bar:40.green/yellow} <{bytes}/{total_bytes}@{binary_bytes_per_sec}>, ETA: {eta_precise}")
+            ProgressStyle::with_template("{prefix:.bold.dim} {bar:40.green/yellow} <{bytes}/{total_bytes} @ {binary_bytes_per_sec}>, ETA: {eta_precise}")
                 .unwrap()        
                 .progress_chars(PROGRESS_CHARS);
         self.size_pb.set_style(size_pb_style);
@@ -112,27 +112,41 @@ impl ProgressWorker {
     }
 
     pub fn show_progress(&mut self) {
-        let mut files_transfered= 0;
-        let mut size_transfered = 0;
+        let mut files_transfered= self.sync_status.num_up_to_date;
+        let mut size_transfered =  self.sync_status.up_to_date_size;
         for (id, copy_progress) in self.copy_statusses.iter().enumerate() {
             files_transfered += copy_progress.num_transfered_files;
             size_transfered += copy_progress.total_transfered_size;
-            self.copy_progress_bars[id].set_position(copy_progress.entry_transfered_size as u64);
-            self.copy_progress_bars[id].set_length(copy_progress.entry_size as u64);
             if copy_progress.copy_done {
                 self.copy_progress_bars[id].finish_with_message("<done>");
             } else {
-                let message = if copy_progress.current_chunk_id.is_some() {
-                    format!(
-                        "{} (#{})",
-                        copy_progress.current_file,
-                        copy_progress.current_chunk_id.unwrap()
-                    )
+                if copy_progress.is_idle {
+                    self.copy_progress_bars[id].set_position(0);
+                    self.copy_progress_bars[id].set_length(1);
+                    let sync_pb_style = ProgressStyle::with_template("{prefix:.bold.dim} {bar:40.green/yellow} (idle)").unwrap();
+                    self.copy_progress_bars[id]
+                    .set_style(sync_pb_style);
                 } else {
-                    copy_progress.current_file.clone()
-                };
-                self.copy_progress_bars[id]
-                    .set_message(message);
+                    self.copy_progress_bars[id].set_position(copy_progress.entry_transfered_size as u64);
+                    self.copy_progress_bars[id].set_length(copy_progress.entry_size as u64);
+                    let sync_pb_style = ProgressStyle::with_template(
+                        "{prefix:.bold.dim} {bar:40.green/yellow} <{bytes}/{total_bytes} @ {binary_bytes_per_sec}> {wide_msg}",
+                    ).unwrap().progress_chars(PROGRESS_CHARS);
+                    self.copy_progress_bars[id]
+                    .set_style(sync_pb_style);
+
+                    let message: String = if copy_progress.current_chunk_id.is_some() {
+                        format!(
+                            "{} (#{})",
+                            copy_progress.current_file,
+                            copy_progress.current_chunk_id.unwrap()
+                        )
+                    } else {
+                        copy_progress.current_file.clone()
+                    };
+                    self.copy_progress_bars[id]
+                        .set_message(message);
+                }
             }
         }
         self.files_pb.set_length(self.walk_status.num_files as u64);

@@ -39,6 +39,8 @@ pub struct CopyStatus {
     pub num_transfered_files: u64,
     /// Done copying process
     pub copy_done: bool,
+    /// Is the worker idle
+    pub is_idle: bool,
 }
 
 impl CopyStatus {
@@ -51,6 +53,7 @@ impl CopyStatus {
             total_transfered_size: 0,
             num_transfered_files: 0,
             copy_done: false,
+            is_idle: true,
         }
     }
 
@@ -58,6 +61,8 @@ impl CopyStatus {
         self.current_file = name.to_string();
         self.entry_size = size;
         self.entry_transfered_size = 0;
+        self.current_chunk_id = None;
+        self.is_idle = false;
     }
 
     pub fn new_chunk(&mut self, name: &str, id: u64, size: usize) {
@@ -65,8 +70,14 @@ impl CopyStatus {
         self.current_chunk_id = Some(id);
     }
 
-    pub fn done_copying(&mut self) {
+    pub fn file_done(&mut self) {
         self.new_file("", 0);
+        self.is_idle = true;
+
+    }
+
+    pub fn done_copying(&mut self) {
+        self.file_done();
         self.copy_done = true;
     }
 }
@@ -97,7 +108,6 @@ impl CopyWorker {
             let copy_entry = self.input.lock().unwrap().recv();
             copy_entry
         } {
-            self.send_progress();
             match self.copy(&copy_entry) {
                 Ok(_) => {
                     if !copy_entry.is_chunk() || copy_entry.is_last_chunk() {
@@ -114,8 +124,9 @@ impl CopyWorker {
                     );
                 }
             };
+            self.status.file_done();
             self.send_progress();
-        }
+       }
         self.status.done_copying();
         self.send_progress();
         Ok(self.status.clone())
@@ -147,6 +158,7 @@ impl CopyWorker {
             src.description(),
             src_size,
         );
+        self.send_progress();
         debug!(
             "[{}] Copying {} from {} to {} length {}",
             self.id,
@@ -213,6 +225,7 @@ impl CopyWorker {
             copy_entry.chunk_index().expect("chunk_index should not be None"),
             length,
         );
+        self.send_progress();
 
         debug!(
             "[{}] Copying {} from {} to {} offset {} length {}",
