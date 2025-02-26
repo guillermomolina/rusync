@@ -176,12 +176,12 @@ impl SyncWorker {
             src.path().display(),
             dest.path().display()
         );
+        let more_recent = fsops::is_more_recent_than(src, dest);
         let is_link = src.is_link().expect("src.is_link should not be None");
-        if is_link {
+        if is_link && more_recent {
             return fsops::copy_link(src, dest, &opts);
         }
         let different_size = fsops::has_different_size(src, dest);
-        let more_recent = fsops::is_more_recent_than(src, dest);
         // TODO: check if files really are different ?
         let file_size = src.length().expect("file_size should not be None") as usize;
         if src.is_file().unwrap() && (more_recent || different_size) {
