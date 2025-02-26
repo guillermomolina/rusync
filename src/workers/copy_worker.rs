@@ -27,10 +27,12 @@ pub const BUFFER_SIZE: usize = 32 * 1024;
 pub struct CopyStatus {
     /// Name of the file being transferred
     pub current_file: String,
+    /// Chunk id of the current file if it is a chunked file
+    pub current_chunk_id: Option<u64>,
     /// Size of the current file (in bytes)
-    pub file_size: usize,
+    pub entry_size: usize,
     /// Number of bytes transfered for the current file
-    pub file_transfered_size: usize,
+    pub entry_transfered_size: usize,
     /// Total number of bytes transfered across all files
     pub total_transfered_size: usize,
     /// Number of files transfered
@@ -43,18 +45,24 @@ impl CopyStatus {
     pub fn new() -> CopyStatus {
         CopyStatus {
             current_file: String::new(),
-            file_size: 0,
-            file_transfered_size: 0,
+            current_chunk_id: None,
+            entry_size: 0,
+            entry_transfered_size: 0,
             total_transfered_size: 0,
             num_transfered_files: 0,
             copy_done: false,
         }
     }
 
-    pub fn new_file(&mut self, name: &str, file_size: usize) {
+    pub fn new_file(&mut self, name: &str, size: usize) {
         self.current_file = name.to_string();
-        self.file_size = file_size;
-        self.file_transfered_size = 0;
+        self.entry_size = size;
+        self.entry_transfered_size = 0;
+    }
+
+    pub fn new_chunk(&mut self, name: &str, id: u64, size: usize) {
+        self.new_file(name, size);
+        self.current_chunk_id = Some(id);
     }
 
     pub fn done_copying(&mut self) {
@@ -114,10 +122,6 @@ impl CopyWorker {
     }
 
     fn copy(&mut self, copy_entry: &CopyEntry) -> Result<CopyOutcome, Error> {
-        self.status.new_file(
-            copy_entry.src.description(),
-            copy_entry.src.length().unwrap(),
-        );
         let outcome = if copy_entry.is_chunk() {
             self.copy_chunk(copy_entry)
         } else {
@@ -139,6 +143,10 @@ impl CopyWorker {
         let opts = &copy_entry.opts;
         let src_meta = src.metadata().expect("src_meta should not be None");
         let src_size = src_meta.len() as usize;
+        self.status.new_file(
+            src.description(),
+            src_size,
+        );
         debug!(
             "[{}] Copying {} from {} to {} length {}",
             self.id,
@@ -183,7 +191,7 @@ impl CopyWorker {
             dest.path().display(),
             src_size,
         );
-        self.status.file_transfered_size = src_size;
+        self.status.entry_transfered_size = src_size;
         self.status.total_transfered_size += src_size;
         Ok(CopyOutcome::FileCopied {
             size: src_size as usize,
@@ -200,6 +208,11 @@ impl CopyWorker {
         let length = copy_entry
             .chunk_length()
             .expect("length should not be None");
+        self.status.new_chunk(
+            src.description(),
+            copy_entry.chunk_index().expect("chunk_index should not be None"),
+            length,
+        );
 
         debug!(
             "[{}] Copying {} from {} to {} offset {} length {}",
@@ -225,8 +238,6 @@ impl CopyWorker {
             None
         };
 
-        self.status.file_transfered_size = offset;
-
         let mut buffer = vec![0; BUFFER_SIZE];
         let mut total_bytes_read = 0;
         while total_bytes_read < length {
@@ -241,7 +252,7 @@ impl CopyWorker {
                 }
             }
             total_bytes_read += bytes_read;
-            self.status.file_transfered_size += bytes_read;
+            self.status.entry_transfered_size += bytes_read;
             self.status.total_transfered_size += bytes_read;
             self.send_progress();
         }

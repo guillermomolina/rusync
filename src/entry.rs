@@ -101,6 +101,7 @@ pub struct CopyEntry {
     pub src: Entry,
     pub dest: Entry,
     pub opts: SyncOptions,
+    pub chunk_index: Option<u64>,
     pub chunk_offset: Option<usize>,
     pub chunk_length: Option<usize>,
 }
@@ -111,16 +112,22 @@ impl CopyEntry {
             src,
             dest,
             opts,
+            chunk_index: None,
             chunk_offset: None,
             chunk_length: None,
         }
     }
 
-    pub fn new_chunk(&self, offset: usize, length: usize) -> CopyEntry {
+    pub fn new_chunk(&self, index: u64, offset: usize, length: usize) -> CopyEntry {
         let mut entry = self.clone();
+        entry.chunk_index = Some(index);
         entry.chunk_offset = Some(offset);
         entry.chunk_length = Some(length);
         entry
+    }
+
+    pub fn chunk_index(&self) -> Option<u64> {
+        self.chunk_index
     }
 
     pub fn chunk_offset(&self) -> Option<usize> {
@@ -132,7 +139,7 @@ impl CopyEntry {
     }
 
     pub fn is_chunk(&self) -> bool {
-        self.chunk_offset.is_some() && self.chunk_length.is_some()
+        self.chunk_index.is_some() && self.chunk_offset.is_some() && self.chunk_length.is_some()
     }
 
     // pub fn is_first_chunk(&self) -> bool {

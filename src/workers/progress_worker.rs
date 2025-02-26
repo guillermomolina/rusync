@@ -34,9 +34,9 @@ impl ProgressWorker {
             sync_status: SyncStatus::new(),
             copy_statusses: vec![CopyStatus::new(); copy_worker_count],
             multi_pogress: MultiProgress::new(),
-            files_pb: ProgressBar::new(0),
-            size_pb: ProgressBar::new(0),
-            copy_progress_bars: vec![ProgressBar::new(0); copy_worker_count],
+            files_pb: ProgressBar::hidden(),
+            size_pb: ProgressBar::hidden(),
+            copy_progress_bars: vec![],
          }
     }
 
@@ -74,30 +74,31 @@ impl ProgressWorker {
     pub fn initialize(&mut self) {
         const PROGRESS_CHARS: &str = "█▉▊▋▌▍▎▏  ";
 
-        self.multi_pogress.add(self.files_pb.clone());
         self.files_pb.set_prefix("[files]");
         let files_pb_style = ProgressStyle::with_template(
-            "{prefix:.bold.dim} {bar:40.green/yellow} {pos}/{len} {elapsed_precise}, BW: <{per_sec}>, ETA: {eta_precise}",
+            "{prefix:.bold.dim} {bar:40.green/yellow} <{pos}/{len} @ {per_sec}> {elapsed_precise}, ETA: {eta_precise}",
         )
         .unwrap()
         .progress_chars(PROGRESS_CHARS);
         self.files_pb.set_style(files_pb_style);
+        self.multi_pogress.add(self.files_pb.clone());
 
-        self.multi_pogress.add(self.size_pb.clone());
         self.size_pb.set_prefix("[size]");
         let size_pb_style =
-            ProgressStyle::with_template("{prefix:.bold.dim} {bar:40.green/yellow} <{bytes}/{total_bytes}>, BW: <{binary_bytes_per_sec}>, ETA: {eta_precise}")
+            ProgressStyle::with_template("{prefix:.bold.dim} {bar:40.green/yellow} <{bytes}/{total_bytes}@{binary_bytes_per_sec}>, ETA: {eta_precise}")
                 .unwrap()        
                 .progress_chars(PROGRESS_CHARS);
         self.size_pb.set_style(size_pb_style);
+        self.multi_pogress.add(self.size_pb.clone());
 
         let sync_pb_style = ProgressStyle::with_template(
-            "{prefix:.bold.dim} {bar:40.green/yellow} <{bytes}/{total_bytes}> {wide_msg}",
+            "{prefix:.bold.dim} {bar:40.green/yellow} <{bytes}/{total_bytes} @ {binary_bytes_per_sec}> {wide_msg}",
         ).unwrap().progress_chars(PROGRESS_CHARS);
-        for (id, pb) in self.copy_progress_bars.iter_mut().enumerate() {
-            self.multi_pogress.add(pb.clone());
+        for id in 0..self.copy_worker_count {
+            let pb = ProgressBar::hidden();
             pb.set_prefix(format!("[{}/{}]", id + 1, self.copy_worker_count));
             pb.set_style(sync_pb_style.clone());
+            self.copy_progress_bars.push(self.multi_pogress.add(pb));
         }
     }
 
@@ -116,14 +117,22 @@ impl ProgressWorker {
         for (id, copy_progress) in self.copy_statusses.iter().enumerate() {
             files_transfered += copy_progress.num_transfered_files;
             size_transfered += copy_progress.total_transfered_size;
-            let file_transfered_size = copy_progress.file_transfered_size;
-            self.copy_progress_bars[id].set_position(file_transfered_size as u64);
-            self.copy_progress_bars[id].set_length(copy_progress.file_size as u64);
+            self.copy_progress_bars[id].set_position(copy_progress.entry_transfered_size as u64);
+            self.copy_progress_bars[id].set_length(copy_progress.entry_size as u64);
             if copy_progress.copy_done {
                 self.copy_progress_bars[id].finish_with_message("<done>");
             } else {
+                let message = if copy_progress.current_chunk_id.is_some() {
+                    format!(
+                        "{} (#{})",
+                        copy_progress.current_file,
+                        copy_progress.current_chunk_id.unwrap()
+                    )
+                } else {
+                    copy_progress.current_file.clone()
+                };
                 self.copy_progress_bars[id]
-                    .set_message(copy_progress.current_file.clone());
+                    .set_message(message);
             }
         }
         self.files_pb.set_length(self.walk_status.num_files as u64);
@@ -131,6 +140,5 @@ impl ProgressWorker {
         let total_size = self.walk_status.total_size as u64;
         self.size_pb.set_length(total_size);
         self.size_pb.set_position(size_transfered as u64);
-        // thread::sleep(Duration::from_millis(100));
     }
 }

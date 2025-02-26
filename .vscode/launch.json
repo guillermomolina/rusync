@@ -23,7 +23,7 @@
                 // "-n",
                 "--progress",
                 "--stats",
-                "--parallelism=2",
+                "--parallelism=4",
                 "--log-level=info",
                 "/user/Temporal",
                 "/user/Temporal2"

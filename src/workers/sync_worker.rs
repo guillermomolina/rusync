@@ -193,7 +193,7 @@ impl SyncWorker {
                     let end = std::cmp::min((i as usize + 1) * CHUNK_SIZE, file_size);
                     let len = end - offset;
 
-                    let chunked_entry = copy_entry.new_chunk(offset, len);
+                    let chunked_entry = copy_entry.new_chunk(i, offset, len);
                     self.output.send(chunked_entry).with_context(|| {
                         "When syncing source dir: could not send entry to copy worker"
                     })?;
